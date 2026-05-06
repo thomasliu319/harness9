@@ -391,6 +391,92 @@ func TestEditFileTool_Execute_L1_ExactMatch(t *testing.T) {
 	}
 }
 
+// L2: 真正测试换行符归一化 — CRLF 文件中使用纯 LF 的多行 source_text
+func TestFuzzyReplace_L2_TrueLineEndingNormalization(t *testing.T) {
+	content := "line1\r\nline2\r\nline3\r\nline4"
+	// source 使用 LF（\n），与文件的 CRLF（\r\n）不同
+	source := "line2\nline3"
+	target := "modified"
+
+	result, err := fuzzyReplace(content, source, target)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "modified") {
+		t.Errorf("target text should appear, got: %s", result)
+	}
+	// CRLF 应被保留
+	if !strings.Contains(result, "\r\n") {
+		t.Error("CRLF line endings should be preserved")
+	}
+}
+
+// L3: 测试 source_text 带有额外首尾空白的情况
+func TestFuzzyReplace_L3_LeadingTrailingWhitespace(t *testing.T) {
+	content := `func main() {
+    fmt.Println("hello")
+}`
+	// source_text 带有额外的首尾空白行和缩进
+	source := `
+    func main() {
+    fmt.Println("hello")
+}    
+`
+	target := `func newFunc() {
+    fmt.Println("world")
+}`
+
+	result, err := fuzzyReplace(content, source, target)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, `fmt.Println("world")`) {
+		t.Errorf("target text should appear, got: %s", result)
+	}
+	if strings.Contains(result, `fmt.Println("hello")`) {
+		t.Errorf("old text should not remain, got: %s", result)
+	}
+}
+
+// L4: 真正测试逐行去缩进 — 每行缩进级别不同，L1/L2/L3 均无法匹配
+func TestFuzzyReplace_L4_LineByLineIndentDifference(t *testing.T) {
+	content := `func foo() {
+        x := 1
+        y := 2
+}`
+	// source_text 使用 3 空格缩进，而文件中是 8 空格
+	source := `func foo() {
+   x := 1
+   y := 2
+}`
+	target := `func foo() {
+    x := 999
+}`
+
+	result, err := fuzzyReplace(content, source, target)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "x := 999") {
+		t.Errorf("target text should appear, got: %s", result)
+	}
+}
+
+// 空文件编辑测试
+func TestEditFileTool_Execute_EmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/empty.txt", []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := NewEditFileTool(dir)
+	// 在空文件中搜索任何文本都应失败
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"empty.txt","source_text":"anything","target_text":"replacement"}`))
+	if err == nil {
+		t.Fatal("expected error when editing empty file")
+	}
+}
+
 // L4: 验证 lineByLineReplace 对 CRLF 文件的保留
 func TestFuzzyReplace_L4_CRLFPreservation(t *testing.T) {
 	content := "func main() {\r\n    fmt.Println(\"hello\")\r\n}"

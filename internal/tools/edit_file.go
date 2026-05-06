@@ -44,7 +44,7 @@ func (t *EditFileTool) Name() string {
 func (t *EditFileTool) Definition() schema.ToolDefinition {
 	return schema.ToolDefinition{
 		Name:        t.Name(),
-		Description: "对现有文件进行局部的字符串替换。这比重写整个文件更安全、更快速。请提供足够的 old_text 上下文以确保匹配的唯一性。",
+		Description: "对现有文件进行局部的字符串替换。这比重写整个文件更安全、更快速。请提供足够的 source_text 上下文以确保匹配的唯一性。",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -113,13 +113,16 @@ func (t *EditFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 //
 // 四级容错机制（Four-Level Fallback Pipeline）：
 //
-//	L1 — 精确匹配：sourceText 在原始内容中精确出现一次，直接替换
+//	L1 — 精确匹配（Exact Match）：sourceText 在原始内容中精确出现一次，直接替换。
+//	    替换使用原始 targetText 而非归一化版本，保留所有原始格式（含 \r\n）。
 //	L2 — 换行符归一化（Line Ending Normalization）：
-//	    将 \r\n 统一为 \n 后再匹配，兼容跨平台文件格式
+//	    将 \r\n 统一为 \n 后再匹配，兼容跨平台文件格式。
+//	    替换后根据原始内容是否包含 \r\n 自动恢复换行风格。
 //	L3 — 整体首尾去空（Trim Surrounding Whitespace）：
-//	    去除 sourceText 两端的空白字符后匹配，容忍 LLM 产生的多余空白
+//	    去除 sourceText 两端的空白字符后匹配，容忍 LLM 产生的多余空白。
+//	    若 trimmedSource 为空（全空白文本），跳过此步避免误匹配空行。
 //	L4 — 逐行去缩进匹配（Line-by-Line Indent-Agnostic Matching）：
-//	    逐行去除首尾空白后滑动窗口匹配，容忍缩进差异
+//	    逐行去除首尾空白后滑动窗口匹配，容忍缩进差异（空格 vs Tab）。
 //
 // 所有级别的匹配结果必须是唯一的（count == 1），多匹配或零匹配均返回明确错误。
 func fuzzyReplace(originalContent, sourceText, targetText string) (string, error) {
@@ -174,7 +177,14 @@ func fuzzyReplace(originalContent, sourceText, targetText string) (string, error
 // 应用场景：LLM 提供的 source_text 与文件中实际内容的缩进不一致时，
 // 通过逐行去缩进实现模糊匹配（Indent-Agnostic Matching）。
 //
-// 匹配成功后，使用 targetText 替换整个匹配块，并保留原始换行风格。
+// 参数说明：
+//   - content:   已归一化（\r\n → \n）的文件内容
+//   - sourceText: 已归一化的待匹配文本（由 fuzzyReplace 传入 normalizedSource）
+//   - targetText: 已归一化的替换文本（由 fuzzyReplace 传入 normalizedTarget）
+//   - hasCRLF:   原始文件是否使用 \r\n 换行风格，用于匹配后恢复
+//
+// 匹配成功后，使用 targetText 替换整个匹配块（contentLines 中从 matchStartIndex
+// 到 matchEndIndex 的范围），并保留原始换行风格。
 func lineByLineReplace(content, sourceText, targetText string, hasCRLF bool) (string, error) {
 	contentLines := strings.Split(content, "\n")
 	sourceLines := strings.Split(strings.TrimSpace(sourceText), "\n")
