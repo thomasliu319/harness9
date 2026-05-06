@@ -38,16 +38,18 @@ func main() {
 	registry.Register(tools.NewReadFileTool(workDir))
 	registry.Register(tools.NewWriteFileTool(workDir))
 	registry.Register(tools.NewBashTool(workDir))
+	registry.Register(tools.NewEditFileTool(workDir))
 
 	// 创建Agent Engine，并关闭慢思考模式
 	eng := engine.NewAgentEngine(llm, registry, workDir, false)
 
-	prompt := `
-	帮我完成以下几件事情：
-	1. 通过控制台命令，查看我本地Go语言的具体版本
-	2. 使用Go语言，编写一个简单的 hello.go 脚本，打印字符串 “hello harness9!”
-	3. 编译脚本，并实际执行，确认输出结果
-	`
+	prompt := `我当前目录下有一个 login.go.tmp 文件。 
+请帮我把里面 "TODO: 增加鉴权逻辑" 下面的那个 if 语句，整个替换为： 
+if user == nil {
+    fmt.Println("Forbidden!")
+    return
+}
+`
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 

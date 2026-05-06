@@ -151,7 +151,8 @@ harness9/
 │   │   ├── safe_path_test.go        # 路径沙箱单元测试
 │   │   ├── bash.go                  # bash 工具（Shell 命令执行，YOLO 哲学）
 │   │   ├── read_file.go             # read_file 工具（沙箱保护，4096 字节截断）
-│   │   └── write_file.go            # write_file 工具（沙箱保护，Auto-Mkdir）
+│   │   ├── write_file.go            # write_file 工具（沙箱保护，Auto-Mkdir）
+│   │   └── edit_file.go             # edit_file 工具（多级模糊匹配文件编辑，沙箱保护）
 │   ├── env/                         # 环境配置
 │   │   ├── env.go                   # 零依赖 .env 文件加载器（系统变量优先）
 │   │   └── env_test.go              # 配置加载单元测试
