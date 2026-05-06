@@ -167,6 +167,7 @@ func main() {
     registry.Register(tools.NewBashTool(workDir))
     registry.Register(tools.NewReadFileTool(workDir))
     registry.Register(tools.NewWriteFileTool(workDir))
+    registry.Register(tools.NewEditFileTool(workDir))
 
     eng := engine.NewAgentEngine(p, registry, workDir, true,
         engine.WithMaxTurns(50),
@@ -188,7 +189,7 @@ func main() {
 | **Engine** | Two-Stage ReAct 主循环，阻塞 + 流式双模式 | ✅ |
 | **Provider** | LLM 统一接口，OpenAI / Anthropic 适配器 | ✅ |
 | **Schema** | 跨组件共享的核心数据类型 | ✅ |
-| **Tools** | 工具注册表 + 内置工具（bash / read_file / write_file） | ✅ |
+| **Tools** | 工具注册表 + 内置工具（bash / read_file / write_file / edit_file） | ✅ |
 | **Env** | 零依赖 `.env` 配置加载器 | ✅ |
 | **Memory** | 会话记忆持久化 | 规划中 |
 | **Feishu** | 飞书机器人集成 | 规划中 |
@@ -222,7 +223,8 @@ harness9/
 │   │   ├── safe_path_test.go        # 路径沙箱单元测试
 │   │   ├── bash.go                  # bash 工具（Shell 命令执行）
 │   │   ├── read_file.go             # read_file 工具（文件读取）
-│   │   └── write_file.go            # write_file 工具（文件写入）
+│   │   ├── write_file.go            # write_file 工具（文件写入）
+│   │   └── edit_file.go             # edit_file 工具（多级模糊匹配文件编辑）
 │   ├── env/
 │   │   ├── env.go                   # 零依赖 .env 配置加载器
 │   │   └── env_test.go              # 配置加载单元测试
