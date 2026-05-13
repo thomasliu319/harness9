@@ -148,3 +148,96 @@ func TestIndex_GetFullContent_Found(t *testing.T) {
 		t.Errorf("body: got %q, want %q", body, "Skill body content.")
 	}
 }
+
+// --- LoadSkills tests ---
+
+// writeSkillFile 在指定路径写入 skill 文件内容的测试辅助函数。
+func writeSkillFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadSkills_NonExistentDir(t *testing.T) {
+	idx, err := LoadSkills("/nonexistent/path/to/skills")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !idx.IsEmpty() {
+		t.Error("expected empty index for nonexistent directory")
+	}
+}
+
+func TestLoadSkills_EmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	idx, err := LoadSkills(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !idx.IsEmpty() {
+		t.Error("expected empty index for empty directory")
+	}
+}
+
+func TestLoadSkills_ValidSkills(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, filepath.Join(dir, "skill-a.md"),
+		"---\nname: skill-a\ndescription: Skill A desc\n---\n\nBody A")
+	writeSkillFile(t, filepath.Join(dir, "skill-b.md"),
+		"---\nname: skill-b\ndescription: Skill B desc\n---\n\nBody B")
+
+	idx, err := LoadSkills(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if idx.IsEmpty() {
+		t.Fatal("expected non-empty index")
+	}
+	summary := idx.Summary()
+	if !strings.Contains(summary, "skill-a: Skill A desc") {
+		t.Errorf("summary missing skill-a: %q", summary)
+	}
+	if !strings.Contains(summary, "skill-b: Skill B desc") {
+		t.Errorf("summary missing skill-b: %q", summary)
+	}
+}
+
+func TestLoadSkills_SkipsInvalidFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, filepath.Join(dir, "no-desc.md"),
+		"---\nname: missing-desc\n---\n\nBody")
+	writeSkillFile(t, filepath.Join(dir, "valid.md"),
+		"---\nname: valid-skill\ndescription: Valid skill\n---\n\nBody")
+
+	idx, err := LoadSkills(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	summary := idx.Summary()
+	if strings.Contains(summary, "missing-desc") {
+		t.Error("skill missing description should be skipped")
+	}
+	if !strings.Contains(summary, "valid-skill") {
+		t.Error("valid skill should be loaded")
+	}
+}
+
+func TestLoadSkills_SkipsNonMdFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeSkillFile(t, filepath.Join(dir, "not-skill.txt"),
+		"---\nname: txt-skill\ndescription: Text file\n---\n\nBody")
+	writeSkillFile(t, filepath.Join(dir, "real.md"),
+		"---\nname: real-skill\ndescription: Real skill\n---\n\nBody")
+
+	idx, err := LoadSkills(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(idx.Summary(), "txt-skill") {
+		t.Error("non-.md files should be skipped")
+	}
+	if !strings.Contains(idx.Summary(), "real-skill") {
+		t.Error(".md skill should be loaded")
+	}
+}
