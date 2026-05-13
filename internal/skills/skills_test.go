@@ -241,3 +241,61 @@ func TestLoadSkills_SkipsNonMdFiles(t *testing.T) {
 		t.Error(".md skill should be loaded")
 	}
 }
+
+// --- UseSkillTool tests ---
+
+func TestUseSkillTool_Name(t *testing.T) {
+	tool := NewUseSkillTool(&Index{})
+	if tool.Name() != "use_skill" {
+		t.Errorf("Name(): got %q, want %q", tool.Name(), "use_skill")
+	}
+}
+
+func TestUseSkillTool_Execute_InvalidArgs(t *testing.T) {
+	tool := NewUseSkillTool(&Index{})
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{invalid json`))
+	if err == nil {
+		t.Error("expected error for invalid JSON args")
+	}
+}
+
+func TestUseSkillTool_Execute_EmptyName(t *testing.T) {
+	tool := NewUseSkillTool(&Index{})
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"skill_name":""}`))
+	if err == nil {
+		t.Error("expected error for empty skill_name")
+	}
+}
+
+func TestUseSkillTool_Execute_NotFound(t *testing.T) {
+	tool := NewUseSkillTool(&Index{})
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"skill_name":"missing"}`))
+	if err == nil {
+		t.Error("expected error for missing skill")
+	}
+	if !strings.Contains(err.Error(), "missing") {
+		t.Errorf("error should mention skill name: %v", err)
+	}
+}
+
+func TestUseSkillTool_Execute_Found(t *testing.T) {
+	f, err := os.CreateTemp("", "skill-*.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString("---\nname: test\ndescription: Test\n---\n\nSkill body content."); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	idx := &Index{skills: []Skill{{Name: "test", Description: "Test", filePath: f.Name()}}}
+	tool := NewUseSkillTool(idx)
+	body, err := tool.Execute(context.Background(), json.RawMessage(`{"skill_name":"test"}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if body != "Skill body content." {
+		t.Errorf("body: got %q, want %q", body, "Skill body content.")
+	}
+}
