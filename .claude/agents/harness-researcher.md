@@ -1,5 +1,8 @@
 ---
+name: harness-researcher
 description: 深度调研主流 Agent Harness 框架的设计理念、核心原理与最佳实践，生成结构化技术调研报告并输出到 docs/技术调研 目录。调研范围严格限定于：DeepAgents、OpenHarness、OpenCode、OpenClaw、HermesAgent、Claude Agent SDK、OpenAI Agent SDK。
+model: sonnet
+tools: Read, Write, Glob, Grep, WebFetch
 ---
 
 # Harness Researcher — Agent Harness 框架深度调研
