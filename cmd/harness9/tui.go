@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -562,6 +563,42 @@ func (m tuiModel) View() string {
 	inputLine := "› " + m.input.View()
 
 	return strings.Join([]string{header, scrollContent, statusBar, inputLine}, "\n")
+}
+
+// summarizeTool 根据工具名对参数进行智能截断摘要，用于 ToolProgress 展示。
+func summarizeTool(name string, args json.RawMessage) string {
+	switch name {
+	case "bash":
+		var v struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal(args, &v); err != nil || v.Command == "" {
+			return ""
+		}
+		cmd := strings.ReplaceAll(v.Command, "\n", " ↵ ")
+		if len([]rune(cmd)) > 120 {
+			return string([]rune(cmd)[:120]) + "…"
+		}
+		return cmd
+	case "read_file", "write_file", "edit_file":
+		var v struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(args, &v); err != nil || v.Path == "" {
+			return ""
+		}
+		return filepath.Base(v.Path)
+	default:
+		if len(args) == 0 {
+			return ""
+		}
+		s := string(args)
+		runes := []rune(s)
+		if len(runes) > 80 {
+			return string(runes[:80]) + "…"
+		}
+		return s
+	}
 }
 
 // RunTUI 以 AltScreen 模式启动 Bubbletea 程序。

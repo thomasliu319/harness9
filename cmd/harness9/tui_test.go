@@ -288,3 +288,47 @@ func TestKeyPgDown_AtBottom_StaysAutoScroll(t *testing.T) {
 		t.Errorf("PgDn at auto-scroll bottom should keep viewTop=-1, got %d", m.viewTop)
 	}
 }
+
+func TestSummarizeTool_Bash(t *testing.T) {
+	args := json.RawMessage(`{"command":"go test ./... 2>&1 | head -20"}`)
+	got := summarizeTool("bash", args)
+	if got != "go test ./... 2>&1 | head -20" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestSummarizeTool_Bash_Truncates(t *testing.T) {
+	long := strings.Repeat("x", 130)
+	args := json.RawMessage(`{"command":"` + long + `"}`)
+	got := summarizeTool("bash", args)
+	if len([]rune(got)) != 121 { // 120 chars + "…"
+		t.Errorf("expected 121 runes (120 + ellipsis), got %d: %q", len([]rune(got)), got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("expected ellipsis suffix, got %q", got)
+	}
+}
+
+func TestSummarizeTool_ReadFile(t *testing.T) {
+	args := json.RawMessage(`{"path":"/home/user/project/main.go"}`)
+	got := summarizeTool("read_file", args)
+	if got != "main.go" {
+		t.Errorf("got %q, want %q", got, "main.go")
+	}
+}
+
+func TestSummarizeTool_Other(t *testing.T) {
+	args := json.RawMessage(`{"key":"value"}`)
+	got := summarizeTool("custom_tool", args)
+	if got != `{"key":"value"}` {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestSummarizeTool_InvalidArgs(t *testing.T) {
+	args := json.RawMessage(`not-json`)
+	got := summarizeTool("bash", args)
+	if got != "" {
+		t.Errorf("invalid args should return empty string, got %q", got)
+	}
+}
