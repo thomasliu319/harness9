@@ -206,27 +206,59 @@ ToolResult{ToolCallID: id, Output: "command not found: foo", IsError: true}
 
 ---
 
+## 安装
+
+### 一键安装（推荐）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZhangShenao/harness9/master/scripts/install.sh | bash
+```
+
+安装完成后验证：
+
+```bash
+harness9 --version
+# harness9 v0.1.0
+```
+
+### 配置 API Key
+
+```bash
+export OPENAI_API_KEY="sk-..."
+
+# 可选：切换模型
+export LLM_MODEL="openai/gpt-4o"
+
+# 可选：使用 OpenRouter 或其他兼容 API
+# export OPENAI_BASE_URL="https://openrouter.ai/api/v1"
+```
+
+建议将 `export` 命令写入 `~/.zshrc` 或 `~/.bashrc`，避免每次重新设置。
+
+### 使用
+
+```bash
+cd /your/project   # 进入你的项目目录
+harness9           # 启动（自动以当前目录为 Agent 工作沙箱）
+```
+
+### 从源码构建（开发者）
+
+需要 Go 1.25+：
+
+```bash
+git clone https://github.com/ZhangShenao/harness9
+cd harness9
+go run ./cmd/harness9
+```
+
+---
+
 ## 快速开始
 
 ### 环境要求
 
-- Go 1.25+
 - OpenAI 或兼容 API Key（OpenRouter、Azure 等）
-
-### 安装 & 启动
-
-```bash
-# 克隆项目
-git clone https://github.com/harness9/harness9
-cd harness9
-
-# 复制并填写 API 配置
-cp .env.example .env
-# 编辑 .env，至少填入 OPENAI_API_KEY
-
-# 启动（交互式终端自动进入 TUI，无需飞书配置）
-go run ./cmd/harness9
-```
 
 ### 配置说明
 
