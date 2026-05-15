@@ -43,7 +43,8 @@ var (
 			Padding(0, 1)
 
 	// 工具执行阶段高亮
-	toolRunStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))            // 黄色：运行中
+	toolRunStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))            // 黄色：运行中（工具名）
+	verbRunStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))           // 黄色：spinner + 动词
 	toolOKStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))            // 绿色：成功
 	toolErrStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))             // 红色：失败
 	doneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true) // 绿色粗体：任务完成

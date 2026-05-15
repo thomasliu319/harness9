@@ -5,8 +5,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 // shortPath 将绝对路径中的 $HOME 替换为 "~"。
@@ -58,12 +56,9 @@ func (m tuiModel) renderToolProgress() string {
 		toolDisplay = m.currentTool
 	}
 
-	verbStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
-	toolStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-
 	return "  " +
-		verbStyle.Render(m.spinner.View()+" "+verb+"...") +
-		toolStyle.Render("  "+toolDisplay) +
+		verbRunStyle.Render(m.spinner.View()+" "+verb+"...") +
+		toolRunStyle.Render("  "+toolDisplay) +
 		dimStyle.Render(fmt.Sprintf("  [%s]", elapsed))
 }
 
