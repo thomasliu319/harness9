@@ -325,6 +325,14 @@ func TestSummarizeTool_Other(t *testing.T) {
 	}
 }
 
+func TestSummarizeTool_WriteFile(t *testing.T) {
+	args := json.RawMessage(`{"path":"/home/user/project/utils.go","content":"package main"}`)
+	got := summarizeTool("write_file", args)
+	if got != "utils.go" {
+		t.Errorf("got %q, want %q", got, "utils.go")
+	}
+}
+
 func TestSummarizeTool_InvalidArgs(t *testing.T) {
 	args := json.RawMessage(`not-json`)
 	got := summarizeTool("bash", args)
