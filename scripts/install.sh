@@ -34,10 +34,11 @@ if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
   exit 1
 fi
 
-TARBALL="${BINARY}_${VERSION}_${OS}_${ARCH}.tar.gz"
+ARCHIVE_VERSION="${VERSION#v}"           # goreleaser 产物不含 v 前缀：v1.2.3 → 1.2.3
+TARBALL="${BINARY}_${ARCHIVE_VERSION}_${OS}_${ARCH}.tar.gz"
 BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
 URL="${BASE_URL}/${TARBALL}"
-CHECKSUM_URL="${BASE_URL}/${BINARY}_${VERSION}_SHA256SUMS"
+CHECKSUM_URL="${BASE_URL}/${BINARY}_${ARCHIVE_VERSION}_SHA256SUMS"
 
 # ── 下载到临时目录 ─────────────────────────────────────────
 TMP=$(mktemp -d)
