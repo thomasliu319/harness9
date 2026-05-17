@@ -116,7 +116,7 @@ type tuiModel struct {
 	// Session 管理
 	manager         *memory.Manager
 	session         memory.Session
-	sessionID       string // UUID 前 8 位，用于状态栏
+	sessionID       string // 完整 session ID，用于状态栏
 	sessionMsgCount int
 
 	// /resume 选择模式
@@ -149,17 +149,9 @@ func newTUIModel(eng *engine.AgentEngine, idx *skills.Index, mgr *memory.Manager
 		session:     sess,
 	}
 	if sess != nil {
-		m.sessionID = shortSessionID(sess.SessionID())
+		m.sessionID = sess.SessionID()
 	}
 	return m
-}
-
-// shortSessionID 返回 session ID 的前 8 位显示串；ID 不足 8 位时原样返回。
-func shortSessionID(id string) string {
-	if len(id) < 8 {
-		return id
-	}
-	return id[:8]
 }
 
 // Init 实现 tea.Model，启动输入框光标闪烁。

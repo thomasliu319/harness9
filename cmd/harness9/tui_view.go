@@ -63,11 +63,16 @@ func (m tuiModel) renderToolProgress() string {
 }
 
 // renderStatusBar 渲染常驻状态栏（model 名 + mode + workdir + session 信息）。
+// 宽度充足时展示完整 session ID；窄终端（< 120 列）时截断为前 8 位加 "…"。
 func (m tuiModel) renderStatusBar() string {
 	sessionInfo := ""
 	if m.sessionID != "" {
+		sid := m.sessionID
+		if m.width < 120 && len(sid) > 8 {
+			sid = sid[:8] + "…"
+		}
 		sessionInfo = dimStyle.Render("  │  session: ") +
-			cyanStyle.Render(m.sessionID) +
+			cyanStyle.Render(sid) +
 			dimStyle.Render(fmt.Sprintf("  msgs: %d", m.sessionMsgCount))
 	}
 	content := dimStyle.Render("  model: ") +

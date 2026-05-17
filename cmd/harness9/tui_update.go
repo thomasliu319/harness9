@@ -18,6 +18,16 @@ import (
 	"github.com/harness9/internal/schema"
 )
 
+// builtinCmds 是 TUI 内置的斜杠命令列表（不含 /），用于 Tab 补全和提示。
+var builtinCmds = []struct {
+	name string
+	desc string
+}{
+	{"new", "开启新会话"},
+	{"resume", "恢复历史会话"},
+	{"exit", "退出 TUI"},
+}
+
 // eventMsg 将 engine.Event 包装为 tea.Msg，供 Bubbletea 的 Update 分发。
 type eventMsg engine.Event
 
@@ -99,10 +109,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.completions = nil
 			m.completionHint = ""
 
+			// /exit 静默退出，不追加用户消息行
+			if raw == "/exit" {
+				return m, tea.Quit
+			}
+
 			// 显示用户消息
 			m.lines = append(m.lines, userMsgStyle.Render("▶ You: ")+raw)
 
-			// 处理会话管理命令
+			// 处理其他内置命令
 			if raw == "/new" {
 				return m.handleNewSession()
 			}
@@ -287,9 +302,10 @@ func (m tuiModel) scrollBy(delta int) tuiModel {
 }
 
 // cycleCompletion 处理 Tab 键：首次进入补全模式，或在匹配列表中循环切换。
+// 补全顺序：内置命令优先，其次 Skills。
 func (m tuiModel) cycleCompletion() tuiModel {
 	raw := m.input.Value()
-	if !strings.HasPrefix(raw, "/") || m.skillsIndex == nil {
+	if !strings.HasPrefix(raw, "/") || m.resumeSelecting {
 		return m
 	}
 	prefix := strings.TrimPrefix(strings.SplitN(raw, " ", 2)[0], "/")
@@ -297,9 +313,16 @@ func (m tuiModel) cycleCompletion() tuiModel {
 	if m.typedPrefix == "" {
 		// 首次按 Tab：以当前输入作为前缀，初始化补全列表
 		var matches []string
-		for _, n := range m.skillsIndex.Names() {
-			if strings.HasPrefix(n, prefix) {
-				matches = append(matches, n)
+		for _, cmd := range builtinCmds {
+			if strings.HasPrefix(cmd.name, prefix) {
+				matches = append(matches, cmd.name)
+			}
+		}
+		if m.skillsIndex != nil {
+			for _, n := range m.skillsIndex.Names() {
+				if strings.HasPrefix(n, prefix) {
+					matches = append(matches, n)
+				}
 			}
 		}
 		if len(matches) == 0 {
@@ -321,35 +344,60 @@ func (m tuiModel) cycleCompletion() tuiModel {
 }
 
 // buildCompletionHint 根据当前输入生成状态栏的补全提示文字。
-// 空输入或非斜杠命令时返回 ""。
+// 空输入、非斜杠命令、或处于 resume 选择模式时返回 ""。
+// 内置命令附带描述，Skills 仅显示名称。
 func (m tuiModel) buildCompletionHint() string {
 	raw := m.input.Value()
-	if !strings.HasPrefix(raw, "/") || m.skillsIndex == nil {
+	if !strings.HasPrefix(raw, "/") || m.resumeSelecting {
 		return ""
 	}
 	prefix := strings.TrimPrefix(strings.SplitN(raw, " ", 2)[0], "/")
 
-	// 正在补全循环中：展示已缓存列表；否则实时计算匹配
-	var names []string
+	type entry struct {
+		name string
+		desc string // 内置命令有描述，Skills 为空
+	}
+
+	// 正在补全循环中：从已缓存列表重建；否则实时匹配
+	var entries []entry
 	if m.typedPrefix != "" && len(m.completions) > 0 {
-		names = m.completions
+		// 用缓存列表还原 entry（desc 需重新查找）
+		descOf := make(map[string]string, len(builtinCmds))
+		for _, cmd := range builtinCmds {
+			descOf[cmd.name] = cmd.desc
+		}
+		for _, n := range m.completions {
+			entries = append(entries, entry{name: n, desc: descOf[n]})
+		}
 	} else {
-		for _, n := range m.skillsIndex.Names() {
-			if strings.HasPrefix(n, prefix) {
-				names = append(names, n)
+		for _, cmd := range builtinCmds {
+			if strings.HasPrefix(cmd.name, prefix) {
+				entries = append(entries, entry{name: cmd.name, desc: cmd.desc})
+			}
+		}
+		if m.skillsIndex != nil {
+			for _, n := range m.skillsIndex.Names() {
+				if strings.HasPrefix(n, prefix) {
+					entries = append(entries, entry{name: n})
+				}
 			}
 		}
 	}
-	if len(names) == 0 {
+	if len(entries) == 0 {
 		return ""
 	}
 
-	parts := make([]string, len(names))
-	for i, n := range names {
-		if m.typedPrefix != "" && i == m.completionIdx {
-			parts[i] = skillStyle.Render("/" + n) // 当前选中项高亮
+	parts := make([]string, len(entries))
+	for i, e := range entries {
+		selected := m.typedPrefix != "" && i == m.completionIdx
+		nameRendered := skillStyle.Render("/" + e.name)
+		if !selected {
+			nameRendered = dimStyle.Render("/" + e.name)
+		}
+		if e.desc != "" {
+			parts[i] = nameRendered + " " + dimStyle.Render("("+e.desc+")")
 		} else {
-			parts[i] = dimStyle.Render("/" + n)
+			parts[i] = nameRendered
 		}
 	}
 	return "  ↹  " + strings.Join(parts, "   ")
@@ -454,7 +502,7 @@ func (m tuiModel) handleNewSession() (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 	}
 	m.session = sess
-	m.sessionID = shortSessionID(sess.SessionID())
+	m.sessionID = sess.SessionID()
 	m.sessionMsgCount = 0
 	if m.eng != nil {
 		m.eng.SetSession(sess)
@@ -493,7 +541,7 @@ func (m tuiModel) handleResumeList() (tea.Model, tea.Cmd) {
 	for i, s := range sessions {
 		line := fmt.Sprintf("  [%d] %s  %s  %d 条消息",
 			i+1,
-			shortSessionID(s.ID),
+			s.ID,
 			s.UpdatedAt.Format("2006-01-02 15:04"),
 			s.MsgCount,
 		)
@@ -530,13 +578,13 @@ func (m tuiModel) handleResumeSelection(raw string) (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 	}
 	m.session = sess
-	m.sessionID = shortSessionID(info.ID)
+	m.sessionID = info.ID
 	m.sessionMsgCount = info.MsgCount
 	if m.eng != nil {
 		m.eng.SetSession(sess)
 	}
 	m.lines = append(m.lines, dimStyle.Render(
-		fmt.Sprintf("  ✓ 已切换到会话 %s（%d 条消息）", shortSessionID(info.ID), info.MsgCount),
+		fmt.Sprintf("  ✓ 已切换到会话 %s（%d 条消息）", info.ID, info.MsgCount),
 	))
 	m.input.Focus()
 	return m, textinput.Blink
