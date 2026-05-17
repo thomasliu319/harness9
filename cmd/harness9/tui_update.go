@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,9 @@ import (
 
 // eventMsg 将 engine.Event 包装为 tea.Msg，供 Bubbletea 的 Update 分发。
 type eventMsg engine.Event
+
+// msgCountMsg 携带会话消息条数，用于 EventDone 后异步刷新状态栏。
+type msgCountMsg int
 
 // readNextEvent 返回一个 tea.Cmd，该 Cmd 阻塞直到 ch 中有一个 Event，
 // 然后以 eventMsg 形式递交给 Update。ch 关闭时递交 EventDone。
@@ -82,6 +86,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			raw := strings.TrimSpace(m.input.Value())
+			if m.resumeSelecting {
+				return m.handleResumeSelection(raw)
+			}
 			if raw == "" {
 				return m, nil
 			}
@@ -94,6 +101,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// 显示用户消息
 			m.lines = append(m.lines, userMsgStyle.Render("▶ You: ")+raw)
+
+			// 处理会话管理命令
+			if raw == "/new" {
+				return m.handleNewSession()
+			}
+			if raw == "/resume" {
+				return m.handleResumeList()
+			}
 
 			// 处理斜杠命令 / 普通输入
 			prompt, ok := resolvePrompt(raw, m.skillsIndex)
@@ -132,6 +147,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.eventCh = ch
 			return m, readNextEvent(ch)
 		}
+
+	case msgCountMsg:
+		m.sessionMsgCount = int(msg)
+		return m, nil
 
 	case eventMsg:
 		return m.handleEvent(engine.Event(msg))
@@ -211,7 +230,7 @@ func (m tuiModel) handleEvent(evt engine.Event) (tea.Model, tea.Cmd) {
 			m.lines[len(m.lines)-1] = doneStyle.Render("  ✅ 任务完成")
 		}
 		m.input.Focus()
-		return m, textinput.Blink
+		return m, tea.Batch(textinput.Blink, m.refreshMsgCount())
 
 	case engine.EventError:
 		errMsg, _ := evt.Data.(string)
@@ -418,5 +437,118 @@ func summarizeTool(name string, args json.RawMessage) string {
 			return string(runes[:80]) + "…"
 		}
 		return s
+	}
+}
+
+// handleNewSession 创建新会话，替换引擎绑定，刷新状态栏。
+func (m tuiModel) handleNewSession() (tea.Model, tea.Cmd) {
+	if m.manager == nil {
+		m.lines = append(m.lines, errorStyle.Render("  ✗ Memory Manager 未初始化"))
+		m.input.Focus()
+		return m, textinput.Blink
+	}
+	sess, err := m.manager.NewSession(m.outerCtx)
+	if err != nil {
+		m.lines = append(m.lines, errorStyle.Render("  ✗ 创建会话失败: "+err.Error()))
+		m.input.Focus()
+		return m, textinput.Blink
+	}
+	m.session = sess
+	m.sessionID = sess.SessionID()[:8]
+	m.sessionMsgCount = 0
+	m.eng.SetSession(sess)
+	m.lines = append(m.lines, dimStyle.Render("  ✓ 新会话已创建: "+m.sessionID))
+	m.input.Reset()
+	m.input.Focus()
+	return m, textinput.Blink
+}
+
+// handleResumeList 列出历史会话供用户选择。
+func (m tuiModel) handleResumeList() (tea.Model, tea.Cmd) {
+	if m.manager == nil {
+		m.lines = append(m.lines, errorStyle.Render("  ✗ Memory Manager 未初始化"))
+		m.input.Focus()
+		return m, textinput.Blink
+	}
+	sessions, err := m.manager.ListSessions(m.outerCtx)
+	if err != nil {
+		m.lines = append(m.lines, errorStyle.Render("  ✗ 获取会话列表失败: "+err.Error()))
+		m.input.Focus()
+		return m, textinput.Blink
+	}
+	if len(sessions) == 0 {
+		m.lines = append(m.lines, dimStyle.Render("  暂无历史会话"))
+		m.input.Focus()
+		return m, textinput.Blink
+	}
+	if len(sessions) > 10 {
+		sessions = sessions[:10]
+	}
+	m.resumeSessions = sessions
+	m.resumeSelecting = true
+
+	m.lines = append(m.lines, dimStyle.Render("  可用会话（最近 10 条）："))
+	for i, s := range sessions {
+		line := fmt.Sprintf("  [%d] %s  %s  %d 条消息",
+			i+1,
+			s.ID[:8],
+			s.UpdatedAt.Format("2006-01-02 15:04"),
+			s.MsgCount,
+		)
+		m.lines = append(m.lines, dimStyle.Render(line))
+	}
+	m.lines = append(m.lines, dimStyle.Render("  输入序号选择（非数字 Enter 取消）："))
+
+	m.input.Reset()
+	m.input.Placeholder = "序号..."
+	m.input.Focus()
+	return m, textinput.Blink
+}
+
+// handleResumeSelection 处理用户在 resume 选择模式下的输入。
+func (m tuiModel) handleResumeSelection(raw string) (tea.Model, tea.Cmd) {
+	savedSessions := m.resumeSessions // 先保存，下面清空 m.resumeSessions
+	m.resumeSelecting = false
+	m.resumeSessions = nil
+	m.input.Placeholder = "输入任务..."
+	m.input.Reset()
+
+	num, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || num < 1 || num > len(savedSessions) {
+		m.lines = append(m.lines, dimStyle.Render("  已取消"))
+		m.input.Focus()
+		return m, textinput.Blink
+	}
+
+	info := savedSessions[num-1]
+	sess, err := m.manager.OpenSession(m.outerCtx, info.ID)
+	if err != nil {
+		m.lines = append(m.lines, errorStyle.Render("  ✗ 加载会话失败: "+err.Error()))
+		m.input.Focus()
+		return m, textinput.Blink
+	}
+	m.session = sess
+	m.sessionID = info.ID[:8]
+	m.sessionMsgCount = info.MsgCount
+	m.eng.SetSession(sess)
+	m.lines = append(m.lines, dimStyle.Render(
+		fmt.Sprintf("  ✓ 已切换到会话 %s（%d 条消息）", info.ID[:8], info.MsgCount),
+	))
+	m.input.Focus()
+	return m, textinput.Blink
+}
+
+// refreshMsgCount 异步查询当前会话消息条数，返回 msgCountMsg tea.Cmd。
+func (m tuiModel) refreshMsgCount() tea.Cmd {
+	if m.session == nil {
+		return nil
+	}
+	sess := m.session
+	return func() tea.Msg {
+		msgs, err := sess.GetMessages(context.Background(), 0)
+		if err != nil {
+			return nil
+		}
+		return msgCountMsg(len(msgs))
 	}
 }

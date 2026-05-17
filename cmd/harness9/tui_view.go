@@ -62,12 +62,19 @@ func (m tuiModel) renderToolProgress() string {
 		dimStyle.Render(fmt.Sprintf("  [%s]", elapsed))
 }
 
-// renderStatusBar 渲染常驻状态栏（model 名 + mode + workdir）。
+// renderStatusBar 渲染常驻状态栏（model 名 + mode + workdir + session 信息）。
 func (m tuiModel) renderStatusBar() string {
+	sessionInfo := ""
+	if m.sessionID != "" {
+		sessionInfo = dimStyle.Render("  │  session: ") +
+			cyanStyle.Render(m.sessionID) +
+			dimStyle.Render(fmt.Sprintf("  msgs: %d", m.sessionMsgCount))
+	}
 	content := dimStyle.Render("  model: ") +
 		cyanStyle.Render(m.modelName) +
 		dimStyle.Render("  │  mode: Default  │  ") +
-		cyanStyle.Render(shortPath(m.workDir))
+		cyanStyle.Render(shortPath(m.workDir)) +
+		sessionInfo
 	return statusBarStyle.Width(m.width).Render(content)
 }
 

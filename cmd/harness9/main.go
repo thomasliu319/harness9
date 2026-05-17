@@ -27,6 +27,7 @@ import (
 	"github.com/harness9/internal/engine"
 	"github.com/harness9/internal/env"
 	"github.com/harness9/internal/logfmt"
+	"github.com/harness9/internal/memory"
 	"github.com/harness9/internal/provider"
 	"github.com/harness9/internal/skills"
 	"github.com/harness9/internal/tools"
@@ -95,16 +96,33 @@ func main() {
 		}
 	}
 
-	eng := engine.NewAgentEngine(llm, registry, workDir,
-		engine.WithPromptBuilder(promptBuilder),
-	)
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatal(logfmt.FormatMsg("main", fmt.Sprintf("获取 home 目录失败: %v", err)))
+	}
+	mgr, err := memory.NewManager(filepath.Join(homeDir, ".harness9", "sessions.db"))
+	if err != nil {
+		log.Fatal(logfmt.FormatMsg("main", fmt.Sprintf("初始化 Memory Manager 失败: %v", err)))
+	}
+	defer mgr.Close()
+
+	sess, err := mgr.NewSession(ctx)
+	if err != nil {
+		log.Fatal(logfmt.FormatMsg("main", fmt.Sprintf("创建会话失败: %v", err)))
+	}
+
+	eng := engine.NewAgentEngine(llm, registry, workDir,
+		engine.WithPromptBuilder(promptBuilder),
+		engine.WithSession(sess),
+		engine.WithCompactor(&memory.SlidingWindowCompactor{MaxMessages: 100}),
+	)
+
 	if term.IsTerminal(os.Stdin.Fd()) {
 		log.Print(logfmt.FormatMsg("main", fmt.Sprintf("harness9 TUI 启动 │ workDir=%s", workDir)))
-		if err := RunTUI(ctx, eng, skillsIndex, workDir, modelName); err != nil {
+		if err := RunTUI(ctx, eng, mgr, sess, skillsIndex, workDir, modelName); err != nil {
 			log.Fatal(logfmt.FormatMsg("main", fmt.Sprintf("TUI 退出: %v", err)))
 		}
 	} else {

@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/harness9/internal/engine"
+	"github.com/harness9/internal/memory"
 	"github.com/harness9/internal/skills"
 )
 
@@ -111,10 +112,20 @@ type tuiModel struct {
 	eventCh     <-chan engine.Event
 	cancelFn    context.CancelFunc
 	running     bool
+
+	// Session 管理
+	manager         *memory.Manager
+	session         memory.Session
+	sessionID       string // UUID 前 8 位，用于状态栏
+	sessionMsgCount int
+
+	// /resume 选择模式
+	resumeSelecting bool
+	resumeSessions  []memory.SessionInfo
 }
 
 // newTUIModel 构造已初始化的 tuiModel：输入框聚焦，spinner 使用 Dot 样式。
-func newTUIModel(eng *engine.AgentEngine, idx *skills.Index, outerCtx context.Context, workDir, modelName string) tuiModel {
+func newTUIModel(eng *engine.AgentEngine, idx *skills.Index, mgr *memory.Manager, sess memory.Session, outerCtx context.Context, workDir, modelName string) tuiModel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
@@ -124,7 +135,7 @@ func newTUIModel(eng *engine.AgentEngine, idx *skills.Index, outerCtx context.Co
 	ti.CharLimit = 0
 	ti.Focus()
 
-	return tuiModel{
+	m := tuiModel{
 		workDir:     workDir,
 		modelName:   modelName,
 		spinner:     sp,
@@ -134,7 +145,13 @@ func newTUIModel(eng *engine.AgentEngine, idx *skills.Index, outerCtx context.Co
 		skillsIndex: idx,
 		viewTop:     -1, // -1 = 自动跟随底部
 		phase:       phaseWelcome,
+		manager:     mgr,
+		session:     sess,
 	}
+	if sess != nil {
+		m.sessionID = sess.SessionID()[:8]
+	}
+	return m
 }
 
 // Init 实现 tea.Model，启动输入框光标闪烁。
@@ -144,13 +161,13 @@ func (m tuiModel) Init() tea.Cmd {
 
 // RunTUI 以 AltScreen 模式启动 Bubbletea 程序。
 // 用户按 Ctrl-C/Ctrl-D（空闲时）退出后返回。
-func RunTUI(ctx context.Context, eng *engine.AgentEngine, idx *skills.Index, workDir, modelName string) error {
+func RunTUI(ctx context.Context, eng *engine.AgentEngine, mgr *memory.Manager, sess memory.Session, idx *skills.Index, workDir, modelName string) error {
 	// TUI 独占终端，将内部日志重定向到静默，避免污染 AltScreen 输出。
 	// 退出后恢复原 Writer，避免影响同进程其他逻辑（如测试框架）。
 	origWriter := log.Writer()
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(origWriter)
-	m := newTUIModel(eng, idx, ctx, workDir, modelName)
+	m := newTUIModel(eng, idx, mgr, sess, ctx, workDir, modelName)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
