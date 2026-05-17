@@ -454,9 +454,11 @@ func (m tuiModel) handleNewSession() (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 	}
 	m.session = sess
-	m.sessionID = sess.SessionID()[:8]
+	m.sessionID = shortSessionID(sess.SessionID())
 	m.sessionMsgCount = 0
-	m.eng.SetSession(sess)
+	if m.eng != nil {
+		m.eng.SetSession(sess)
+	}
 	m.lines = append(m.lines, dimStyle.Render("  ✓ 新会话已创建: "+m.sessionID))
 	m.input.Reset()
 	m.input.Focus()
@@ -487,11 +489,11 @@ func (m tuiModel) handleResumeList() (tea.Model, tea.Cmd) {
 	m.resumeSessions = sessions
 	m.resumeSelecting = true
 
-	m.lines = append(m.lines, dimStyle.Render("  可用会话（最近 10 条）："))
+	m.lines = append(m.lines, dimStyle.Render(fmt.Sprintf("  可用会话（%d 条）：", len(sessions))))
 	for i, s := range sessions {
 		line := fmt.Sprintf("  [%d] %s  %s  %d 条消息",
 			i+1,
-			s.ID[:8],
+			shortSessionID(s.ID),
 			s.UpdatedAt.Format("2006-01-02 15:04"),
 			s.MsgCount,
 		)
@@ -528,11 +530,13 @@ func (m tuiModel) handleResumeSelection(raw string) (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 	}
 	m.session = sess
-	m.sessionID = info.ID[:8]
+	m.sessionID = shortSessionID(info.ID)
 	m.sessionMsgCount = info.MsgCount
-	m.eng.SetSession(sess)
+	if m.eng != nil {
+		m.eng.SetSession(sess)
+	}
 	m.lines = append(m.lines, dimStyle.Render(
-		fmt.Sprintf("  ✓ 已切换到会话 %s（%d 条消息）", info.ID[:8], info.MsgCount),
+		fmt.Sprintf("  ✓ 已切换到会话 %s（%d 条消息）", shortSessionID(info.ID), info.MsgCount),
 	))
 	m.input.Focus()
 	return m, textinput.Blink
