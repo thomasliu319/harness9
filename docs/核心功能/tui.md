@@ -279,8 +279,8 @@ glamour.NewTermRenderer(
 
 | 按键 | idle 状态 | Agent 运行中 |
 |------|-----------|-------------|
-| `Enter` | 发送输入，启动 Agent（首次触发 phaseWelcome→phaseChat） | 忽略 |
-| `Tab` | 斜杠命令 Skill 补全循环 | 忽略 |
+| `Enter` | 发送输入，启动 Agent（首次触发 phaseWelcome→phaseChat）；输入 `/exit` 时退出 TUI | 忽略 |
+| `Tab` | 内置命令 + Skills 补全循环（内置命令优先） | 忽略 |
 | `Ctrl-C` / `Ctrl-D` | 退出 TUI | 调用 `cancelFn()` 中断 Agent |
 | 鼠标滚轮上 / `PgUp` / `↑` | 向上滚动 | 同左 |
 | 鼠标滚轮下 / `PgDn` / `↓` | 向下滚动，到底回到 auto-scroll | 同左 |
@@ -315,11 +315,32 @@ enter 发送  / 技能命令  ↑↓ 滚动  end 回底部 (42%)  ctrl+c 退出
 
 ---
 
-## Slash 命令与 Tab 补全
+## 内置命令与 Slash 命令
 
-### 识别流程
+### 内置命令
 
-输入以 `/` 开头时，`resolvePrompt` 查找对应 Skill：
+TUI 内置三条斜杠命令，优先于 Skills 处理：
+
+| 命令 | 行为 |
+|------|------|
+| `/new` | 新建会话，替换引擎绑定，状态栏刷新 |
+| `/resume` | 列出历史会话，进入序号选择模式 |
+| `/exit` | 退出 TUI（等同于空闲时按 Ctrl-C） |
+
+```go
+var builtinCmds = []struct {
+    name string
+    desc string
+}{
+    {"new", "开启新会话"},
+    {"resume", "恢复历史会话"},
+    {"exit", "退出 TUI"},
+}
+```
+
+### Skills 识别流程
+
+输入以 `/` 开头且不匹配内置命令时，`resolvePrompt` 查找对应 Skill：
 
 ```
 /skill-name [可选附加文本]
@@ -332,14 +353,18 @@ skills.Index.GetFullContent("skill-name")
 
 ### Tab 补全
 
-1. 首次 Tab：以当前输入前缀匹配所有 Skill 名，缓存结果，补全第一个匹配项
-2. 再次 Tab：在匹配列表中循环
+1. 首次 Tab：以当前输入前缀同时匹配**内置命令**和 Skills，内置命令优先排在前面
+2. 再次 Tab：在合并列表中循环
 3. 任意非 Tab 按键：退出补全循环
 
-当前选中项显示在 Footer（青色），其余为灰色：
+Footer 实时展示匹配提示；内置命令附带括号描述，Skills 仅显示名称；当前选中项青色高亮：
 
 ```
-  ↹  /go-coding-standards   /go-lint-guide
+  ↹  /new (开启新会话)   /resume (恢复历史会话)   /exit (退出 TUI)
+```
+
+```
+  ↹  /new (开启新会话)   /go-coding-standards   /go-lint-guide
 ```
 
 ---

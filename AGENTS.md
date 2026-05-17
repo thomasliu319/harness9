@@ -252,7 +252,7 @@ harness9/
 | 模块 | 职责 | 状态 |
 |------|------|:----:|
 | **cmd/harness9** | 主入口：TTY 自动检测选择 TUI / CLI；初始化 Memory Manager + 首个 Session | ✅ |
-| **tui** | 全屏 TUI（Bubbletea）：WelcomeBanner + 对话页双 Phase、Spinner 动词轮换、Tab 补全、Markdown 渲染、`/new`/`/resume` 会话管理、状态栏 session/msgs 展示 | ✅ |
+| **tui** | 全屏 TUI（Bubbletea）：WelcomeBanner + 对话页双 Phase、Spinner 动词轮换、内置命令 Tab 补全（`/new`/`/resume`/`/exit` 附描述）+ Skills 补全、Markdown 渲染、会话管理、状态栏完整 session ID 展示 | ✅ |
 | **engine** | 标准 ReAct 主循环，阻塞 + 流式双模式，并发工具调度，Session/Compactor 集成（含并发安全 SetSession） | ✅ |
 | **memory** | Short-Term Memory：Session 接口、Manager（SQLite CRUD）、SQLiteSession（WAL + 事务）、SlidingWindowCompactor（滑动窗口 + 孤立 Observation 回溯） | ✅ |
 | **provider** | LLM 统一接口 + OpenAI / Anthropic SDK 适配器 | ✅ |

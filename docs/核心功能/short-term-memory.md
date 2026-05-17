@@ -315,7 +315,7 @@ type tuiModel struct {
     // Session 管理
     manager         *memory.Manager   // 共享 SQLite 连接，整个进程唯一实例
     session         memory.Session    // 当前活跃会话
-    sessionID       string            // UUID 前 8 位，用于状态栏显示
+    sessionID       string            // 完整 session ID，用于状态栏显示
     sessionMsgCount int               // 当前会话消息条数
 
     // /resume 选择模式
@@ -324,20 +324,29 @@ type tuiModel struct {
 }
 ```
 
-### 9.2 斜杠命令
+### 9.2 内置斜杠命令
+
+三条内置命令通过 `builtinCmds` 统一注册，Enter 时优先于 Skills 匹配，Tab 键可补全（附带描述）：
 
 | 命令 | 行为 |
 |------|------|
 | `/new` | 调用 `manager.NewSession()`，替换 `session`，调用 `eng.SetSession()`，重置 `sessionMsgCount`，状态栏刷新 |
 | `/resume` | 调用 `manager.ListSessions()`，展示最近 10 条会话列表，进入序号选择模式 |
+| `/exit` | 调用 `tea.Quit` 退出 TUI |
 
-`/resume` 交互流：
+Tab 补全提示示例（Footer 实时展示，当前选中项青色高亮）：
+
+```
+  ↹  /new (开启新会话)   /resume (恢复历史会话)   /exit (退出 TUI)
+```
+
+`/resume` 交互流（展示完整 session ID）：
 
 ```
 可用会话（3 条）：
-  [1] f3a2c1b0  2026-05-17 14:30  23 条消息
-  [2] 9c1b77a2  2026-05-16 09:15  41 条消息
-  [3] 8d4f2e01  2026-05-15 21:00  7 条消息
+  [1] f3a2c1b0-4d7e-4c3a-9f12-ab8d1e2c3f01  2026-05-17 14:30  23 条消息
+  [2] 9c1b77a2-8e5f-4b2d-a301-cd4e5f6a7b02  2026-05-16 09:15  41 条消息
+  [3] 8d4f2e01-1c3b-4a5d-b210-ef7a8b9c0d03  2026-05-15 21:00  7 条消息
 输入序号选择（非数字 Enter 取消）：
 ```
 
@@ -345,8 +354,10 @@ type tuiModel struct {
 
 ### 9.3 状态栏
 
+状态栏展示完整 session ID（不截断）：
+
 ```
-[harness9] gpt-4o-mini  workdir: /your/project  │  session: f3a2c1b0  msgs: 23
+[harness9] gpt-4o-mini  workdir: /your/project  │  session: f3a2c1b0-4d7e-4c3a-9f12-ab8d1e2c3f01  msgs: 23
 ```
 
 `sessionMsgCount` 在每次 `EventDone` 事件后通过 `msgCountMsg tea.Cmd` 异步刷新：
