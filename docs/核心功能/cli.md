@@ -114,7 +114,11 @@ export LLM_MODEL="openai/gpt-4o-mini"
 
 ```env
 OPENAI_API_KEY=sk-...
+
+# 可选：切换模型
 LLM_MODEL=openai/gpt-4o-mini
+
+# 可选：使用 OpenRouter 或其他兼容 API
 # OPENAI_BASE_URL=https://openrouter.ai/api/v1
 ```
 

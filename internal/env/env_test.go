@@ -60,7 +60,9 @@ func TestLoad_FileNotFound(t *testing.T) {
 // TestLoad_DoesNotOverride 验证已存在的系统环境变量不会被 .env 文件覆盖。
 // 这确保了"系统环境变量 > .env 文件"的优先级策略。
 func TestLoad_DoesNotOverride(t *testing.T) {
-	os.Setenv("EXISTING_KEY", "system_value")
+	if err := os.Setenv("EXISTING_KEY", "system_value"); err != nil {
+		t.Fatalf("setup: setenv: %v", err)
+	}
 	defer os.Unsetenv("EXISTING_KEY")
 
 	dir := t.TempDir()
@@ -119,7 +121,9 @@ func TestParseLine(t *testing.T) {
 // TestLoad_DoesNotOverrideEmptyString 验证手动设置为空字符串的环境变量不会被 .env 文件覆盖。
 // 这区分了"变量未定义"与"变量被显式设置为空字符串"两种情况。
 func TestLoad_DoesNotOverrideEmptyString(t *testing.T) {
-	os.Setenv("EMPTY_SYSTEM_KEY", "")
+	if err := os.Setenv("EMPTY_SYSTEM_KEY", ""); err != nil {
+		t.Fatalf("setup: setenv: %v", err)
+	}
 	defer os.Unsetenv("EMPTY_SYSTEM_KEY")
 
 	dir := t.TempDir()
