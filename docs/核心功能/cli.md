@@ -91,7 +91,16 @@ harness9>
 | `LLM_MODEL` | ❌ | `openai/gpt-4o-mini` | 模型名称，支持任意 OpenAI 兼容模型 |
 | `OPENAI_BASE_URL` | ❌ | OpenAI 官方地址 | 自定义 API 地址，可接入 OpenRouter / Azure / 本地模型 |
 
-**推荐（全局安装）**：通过系统环境变量配置，写入 `~/.zshrc` 或 `~/.bashrc`：
+### 加载规则
+
+harness9 启动时从**工作目录（即执行 `harness9` 命令时所在的目录）**读取 `.env` 文件。  
+手动通过 `export` 或 shell 配置文件设置的变量**始终优先**于 `.env` 文件中的同名变量。
+
+**优先级：** `export VAR=value` > `work_dir/.env` 文件
+
+### 方式一：手动 export（推荐，全局生效）
+
+写入 `~/.zshrc` 或 `~/.bashrc`，对所有项目生效，无需在每个目录放置 `.env`：
 
 ```bash
 export OPENAI_API_KEY="sk-..."
@@ -99,7 +108,9 @@ export LLM_MODEL="openai/gpt-4o-mini"
 # export OPENAI_BASE_URL="https://openrouter.ai/api/v1"
 ```
 
-**备用（源码开发）**：在运行命令的目录放置 `.env` 文件：
+### 方式二：.env 文件（项目级配置）
+
+在项目根目录放置 `.env` 文件，仅对当前项目生效：
 
 ```env
 OPENAI_API_KEY=sk-...
@@ -107,7 +118,7 @@ LLM_MODEL=openai/gpt-4o-mini
 # OPENAI_BASE_URL=https://openrouter.ai/api/v1
 ```
 
-> 系统环境变量优先于 `.env` 文件。已存在的系统变量不会被 `.env` 覆盖。
+> **注意：** `.env` 文件包含 API Key 等敏感信息，建议将其加入 `.gitignore`，避免提交到代码仓库。
 
 ---
 
