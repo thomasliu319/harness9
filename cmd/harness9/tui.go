@@ -119,10 +119,9 @@ type tuiModel struct {
 	running     bool
 
 	// Session 管理
-	manager         *memory.Manager
-	session         memory.Session
-	sessionID       string // 完整 session ID，用于状态栏
-	sessionMsgCount int
+	manager   *memory.Manager
+	session   memory.Session
+	sessionID string // 完整 session ID，用于状态栏
 
 	// Context token 跟踪（由 EventTokenUpdate 更新）
 	contextTokens int // 当前估算 context token 数
