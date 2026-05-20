@@ -351,12 +351,10 @@ func (m *mockTodoInjector) FormatForInjection() string { return m.text }
 
 func TestSummarizationCompactor_InjectsTodos(t *testing.T) {
 	p := &mockSummarizer{responses: []string{"summary content"}}
-	c := &memory.SummarizationCompactor{
-		Provider:        p,
-		MaxTokens:       1,
-		MinTailMessages: 1,
-	}
-	c.TodoInjector = &mockTodoInjector{text: "[>] active task\n[ ] pending task"}
+	injector := &mockTodoInjector{text: "[>] active task\n[ ] pending task"}
+	c := memory.NewSummarizationCompactor(p, 0, memory.WithTodoInjector(injector))
+	c.MaxTokens = 1
+	c.MinTailMessages = 1
 
 	msgs := []schema.Message{
 		{Role: schema.RoleSystem, Content: "sys"},

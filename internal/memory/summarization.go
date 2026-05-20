@@ -64,15 +64,27 @@ type SummarizationCompactor struct {
 	TodoInjector TodoInjector
 }
 
+// CompactorOption 是 NewSummarizationCompactor 的函数选项。
+type CompactorOption func(*SummarizationCompactor)
+
+// WithTodoInjector 在摘要末尾注入活跃任务列表，防止 LLM 在上下文压缩后遗忘未完成任务。
+func WithTodoInjector(ti TodoInjector) CompactorOption {
+	return func(c *SummarizationCompactor) { c.TodoInjector = ti }
+}
+
 // NewSummarizationCompactor 创建针对指定 context window 大小的 SummarizationCompactor。
 // MaxTokens 自动设为 contextWindow 的 80%；MinTailMessages 默认 6。
-func NewSummarizationCompactor(p Summarizer, contextWindow int) *SummarizationCompactor {
-	return &SummarizationCompactor{
+func NewSummarizationCompactor(p Summarizer, contextWindow int, opts ...CompactorOption) *SummarizationCompactor {
+	c := &SummarizationCompactor{
 		Provider:        p,
 		MaxTokens:       contextWindow * 80 / 100,
 		MinTailMessages: 6,
 		Fallback:        NewTokenBudgetCompactor(contextWindow),
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // Compact 在 token 超出预算时调用 LLM 摘要旧消息，返回压缩后的消息列表。
@@ -193,10 +205,4 @@ func (c *SummarizationCompactor) fallback() Compactor {
 		MaxTokens:       c.maxTokens(),
 		MinTailMessages: c.minTail(),
 	}
-}
-
-// WithTodoInjector 为 SummarizationCompactor 设置 TodoInjector。
-// 典型用法：main.go 创建 TodoStore 后通过此函数注入。
-func WithTodoInjector(s *SummarizationCompactor, ti TodoInjector) {
-	s.TodoInjector = ti
 }

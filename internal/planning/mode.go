@@ -32,7 +32,7 @@ func (m PlanMode) Label() string {
 	case PlanModePlan:
 		return "[PLAN]"
 	case PlanModeAutoEdit:
-		return "[AUTO]"
+		return "[AUTO (未实现)]"
 	default:
 		return ""
 	}

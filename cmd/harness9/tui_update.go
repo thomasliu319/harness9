@@ -620,8 +620,12 @@ func summarizeTool(name string, args json.RawMessage) string {
 	}
 }
 
-// dispatch 以指定 prompt 启动一次 agent 推理流，需确保调用时 running == false。
+// dispatch 以指定 prompt 启动一次 agent 推理流。
+// 调用时 running 必须为 false；若已有推理在进行则静默返回，防止并发启动。
 func (m tuiModel) dispatch(prompt string) (tuiModel, tea.Cmd) {
+	if m.running {
+		return m, nil
+	}
 	m.lines = append(m.lines, assistantStyle.Render("◆ harness9:"), "")
 	m.pendingReplyStart = len(m.lines) - 1
 	m.pendingReply = ""

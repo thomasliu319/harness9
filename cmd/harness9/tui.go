@@ -56,6 +56,12 @@ var (
 				Background(lipgloss.Color("94")).
 				Foreground(lipgloss.Color("220")).
 				Padding(0, 1)
+	planModeLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
+	planReviewBoxStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("208")).
+				Padding(0, 2).
+				Width(50)
 
 	// token 使用率颜色（绿/黄/红，按使用量变化）
 	tokenOKStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // < 50%: 绿

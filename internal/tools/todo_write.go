@@ -78,8 +78,12 @@ func (t *TodoWriteTool) Execute(_ context.Context, args json.RawMessage) (string
 			}
 			prior, exists := prevStatus[item.ID]
 			if !exists || (prior != planning.TodoInProgress && prior != planning.TodoCompleted) {
+				priorStr := "new"
+				if exists {
+					priorStr = string(prior)
+				}
 				return "", fmt.Errorf("任务 %q 不能直接标记为 completed（当前状态：%s）；请先将其标记为 in_progress，完成实际操作后再标记为 completed",
-					item.ID, map[bool]string{true: string(prior), false: "new"}[exists])
+					item.ID, priorStr)
 			}
 		}
 		current = t.store.Write(input.Todos)

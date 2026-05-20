@@ -178,16 +178,20 @@ func (m tuiModel) renderStatusBar() string {
 	modeLabel := m.planMode.Label()
 	var modePart string
 	if modeLabel != "" {
-		planStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
-		modePart = dimStyle.Render("  │  ") + planStyle.Render(modeLabel)
+		modePart = dimStyle.Render("  │  ") + planModeLabelStyle.Render(modeLabel)
 	}
 
 	var tasksPart string
 	if m.todoStore != nil {
-		active, total := m.todoStore.ActiveCount()
-		if total > 0 {
-			completed := total - active
-			tasksPart = dimStyle.Render("  │  ") + accent.Render(fmt.Sprintf("%d/%d tasks", completed, total))
+		items := m.todoStore.Read()
+		if len(items) > 0 {
+			var completed int
+			for _, item := range items {
+				if item.Status == planning.TodoCompleted {
+					completed++
+				}
+			}
+			tasksPart = dimStyle.Render("  │  ") + accent.Render(fmt.Sprintf("%d/%d tasks", completed, len(items)))
 		}
 	}
 
@@ -203,20 +207,13 @@ func (m tuiModel) renderStatusBar() string {
 
 // renderPlanReviewDialog 渲染 Plan Mode 完成后的审查选择对话框。
 func (m tuiModel) renderPlanReviewDialog() string {
-	planStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("208")).
-		Padding(0, 2).
-		Width(50)
+	content := planModeLabelStyle.Render("Plan Mode 完成 — 选择下一步操作") + "\n\n" +
+		planAccentStyle.Render("[1]") + "  批准并自动执行\n" +
+		planAccentStyle.Render("[2]") + "  批准并逐步确认编辑\n" +
+		planAccentStyle.Render("[3]") + "  继续修改计划（保持 Plan Mode）\n" +
+		planAccentStyle.Render("[4]") + "  取消"
 
-	content := planStyle.Render("Plan Mode 完成 — 选择下一步操作") + "\n\n" +
-		cyanStyle.Render("[1]") + "  批准并自动执行\n" +
-		cyanStyle.Render("[2]") + "  批准并逐步确认编辑\n" +
-		cyanStyle.Render("[3]") + "  继续修改计划（保持 Plan Mode）\n" +
-		cyanStyle.Render("[4]") + "  取消"
-
-	return boxStyle.Render(content)
+	return planReviewBoxStyle.Render(content)
 }
 
 // renderInput 渲染输入行。Plan Mode 下用琥珀色高亮 › 提示符。

@@ -360,7 +360,7 @@ func TestRunLoop_PlanMode_FiltersWriteTools(t *testing.T) {
 	visibleTools := p.calls[0].tools
 	for _, tool := range visibleTools {
 		switch tool.Name {
-		case "write_file", "edit_file", "todo_write":
+		case "write_file", "edit_file":
 			t.Errorf("tool %q should be filtered in PlanMode, but was visible", tool.Name)
 		}
 	}
@@ -373,5 +373,8 @@ func TestRunLoop_PlanMode_FiltersWriteTools(t *testing.T) {
 	}
 	if !found["bash"] {
 		t.Error("bash should be visible in PlanMode")
+	}
+	if !found["todo_write"] {
+		t.Error("todo_write should be visible in PlanMode (needed to write the plan)")
 	}
 }

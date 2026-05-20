@@ -41,7 +41,7 @@ func TestPlanMode_Label(t *testing.T) {
 	if got := planning.PlanModePlan.Label(); got != "[PLAN]" {
 		t.Errorf("Plan.Label() = %q, want [PLAN]", got)
 	}
-	if got := planning.PlanModeAutoEdit.Label(); got != "[AUTO]" {
-		t.Errorf("AutoEdit.Label() = %q, want [AUTO]", got)
+	if got := planning.PlanModeAutoEdit.Label(); got != "[AUTO (未实现)]" {
+		t.Errorf("AutoEdit.Label() = %q, want [AUTO (未实现)]", got)
 	}
 }

@@ -371,10 +371,12 @@ func (e *AgentEngine) saveHistoryWith(ctx context.Context, sess memory.Session, 
 }
 
 // planModeWhitelist 是 Plan Mode 下允许 LLM 调用的工具名称集合。
+// 包含 todo_write：Plan Mode 的核心目标是让 LLM 通过 todo_write 输出结构化计划。
 var planModeWhitelist = map[string]bool{
-	"read_file": true,
-	"bash":      true,
-	"use_skill": true,
+	"read_file":  true,
+	"bash":       true,
+	"use_skill":  true,
+	"todo_write": true,
 }
 
 // filterReadOnlyTools 返回 tools 中属于 planModeWhitelist 的子集。
