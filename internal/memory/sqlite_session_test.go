@@ -195,13 +195,13 @@ func TestSQLiteSession_SaveAndGetTodos(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("want 3 todos, got %d", len(got))
 	}
-	if got[0].ID != "1" || got[0].Status != planning.TodoPending {
+	if got[0].ID != "1" || got[0].Content != "step one" || got[0].Status != planning.TodoPending {
 		t.Errorf("unexpected item 0: %+v", got[0])
 	}
-	if got[1].ID != "2" || got[1].Status != planning.TodoInProgress {
+	if got[1].ID != "2" || got[1].Content != "step two" || got[1].Status != planning.TodoInProgress {
 		t.Errorf("unexpected item 1: %+v", got[1])
 	}
-	if got[2].ID != "3" || got[2].Status != planning.TodoCompleted {
+	if got[2].ID != "3" || got[2].Content != "step three" || got[2].Status != planning.TodoCompleted {
 		t.Errorf("unexpected item 2: %+v", got[2])
 	}
 }
@@ -266,8 +266,14 @@ func TestSQLiteSession_GetTodos_CrossSessionIsolation(t *testing.T) {
 	}
 	t.Cleanup(func() { mgr.Close() })
 
-	sess1, _ := mgr.NewSession(ctx)
-	sess2, _ := mgr.NewSession(ctx)
+	sess1, err := mgr.NewSession(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess2, err := mgr.NewSession(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if err := sess1.SaveTodos(ctx, []planning.TodoItem{
 		{ID: "a", Content: "sess1 task", Status: planning.TodoPending},
