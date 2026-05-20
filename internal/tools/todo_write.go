@@ -65,6 +65,23 @@ func (t *TodoWriteTool) Execute(_ context.Context, args json.RawMessage) (string
 
 	var current []planning.TodoItem
 	if len(input.Todos) > 0 {
+		// 校验：item 只能在经过 in_progress 后才能变为 completed。
+		// 禁止 pending/cancelled/新建 → completed 的直接跳转（LLM 作弊防护）。
+		prev := t.store.Read()
+		prevStatus := make(map[string]planning.TodoStatus, len(prev))
+		for _, item := range prev {
+			prevStatus[item.ID] = item.Status
+		}
+		for _, item := range input.Todos {
+			if item.Status != planning.TodoCompleted {
+				continue
+			}
+			prior, exists := prevStatus[item.ID]
+			if !exists || (prior != planning.TodoInProgress && prior != planning.TodoCompleted) {
+				return "", fmt.Errorf("任务 %q 不能直接标记为 completed（当前状态：%s）；请先将其标记为 in_progress，完成实际操作后再标记为 completed",
+					item.ID, map[bool]string{true: string(prior), false: "new"}[exists])
+			}
+		}
 		current = t.store.Write(input.Todos)
 	} else {
 		current = t.store.Read()

@@ -105,3 +105,82 @@ func TestTodoWriteTool_InvalidJSON(t *testing.T) {
 		t.Error("expected error for invalid JSON, got nil")
 	}
 }
+
+// TestTodoWriteTool_PendingToCompleted 验证 pending→completed 被拒绝（LLM 作弊防护）。
+func TestTodoWriteTool_PendingToCompleted(t *testing.T) {
+	store := planning.NewTodoStore()
+	tool := tools.NewTodoWriteTool(store)
+
+	// 初始化：两个 pending 任务
+	init, _ := json.Marshal(map[string]interface{}{
+		"todos": []map[string]string{
+			{"id": "1", "content": "task one", "status": "pending"},
+			{"id": "2", "content": "task two", "status": "pending"},
+		},
+	})
+	if _, err := tool.Execute(context.Background(), init); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+
+	// 尝试直接将 pending 标记为 completed（绕过 in_progress）
+	cheat, _ := json.Marshal(map[string]interface{}{
+		"todos": []map[string]string{
+			{"id": "1", "content": "task one", "status": "completed"},
+			{"id": "2", "content": "task two", "status": "completed"},
+		},
+	})
+	_, err := tool.Execute(context.Background(), cheat)
+	if err == nil {
+		t.Error("expected error when jumping pending→completed, got nil")
+	}
+
+	// store 应保持未变
+	stored := store.Read()
+	for _, item := range stored {
+		if item.Status == planning.TodoCompleted {
+			t.Errorf("store should not have completed items after rejected write, got %+v", stored)
+		}
+	}
+}
+
+// TestTodoWriteTool_InProgressToCompleted 验证 in_progress→completed 允许通过。
+func TestTodoWriteTool_InProgressToCompleted(t *testing.T) {
+	store := planning.NewTodoStore()
+	tool := tools.NewTodoWriteTool(store)
+
+	// 初始化：item1 in_progress
+	init, _ := json.Marshal(map[string]interface{}{
+		"todos": []map[string]string{
+			{"id": "1", "content": "task one", "status": "in_progress"},
+		},
+	})
+	if _, err := tool.Execute(context.Background(), init); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+
+	// in_progress → completed 合法
+	complete, _ := json.Marshal(map[string]interface{}{
+		"todos": []map[string]string{
+			{"id": "1", "content": "task one", "status": "completed"},
+		},
+	})
+	if _, err := tool.Execute(context.Background(), complete); err != nil {
+		t.Errorf("in_progress→completed should be allowed, got error: %v", err)
+	}
+}
+
+// TestTodoWriteTool_NewItemCompleted 验证新条目不能直接创建为 completed。
+func TestTodoWriteTool_NewItemCompleted(t *testing.T) {
+	store := planning.NewTodoStore()
+	tool := tools.NewTodoWriteTool(store)
+
+	args, _ := json.Marshal(map[string]interface{}{
+		"todos": []map[string]string{
+			{"id": "1", "content": "brand new", "status": "completed"},
+		},
+	})
+	_, err := tool.Execute(context.Background(), args)
+	if err == nil {
+		t.Error("expected error when creating new item as completed, got nil")
+	}
+}
