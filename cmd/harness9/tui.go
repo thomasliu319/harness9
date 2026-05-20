@@ -140,9 +140,7 @@ type tuiModel struct {
 	resumeSessions  []memory.SessionInfo
 
 	// Todo 跟踪
-	todoStore      *planning.TodoStore
-	todoBlockStart int // todo 块在 lines 中的起始索引，-1 表示尚未渲染
-	todoBlockLen   int // todo 块当前占用的行数
+	todoStore *planning.TodoStore
 
 	// Plan Mode 状态
 	planMode      planning.PlanMode
@@ -166,21 +164,20 @@ func newTUIModel(eng *engine.AgentEngine, idx *skills.Index, mgr *memory.Manager
 	ti.Focus()
 
 	m := tuiModel{
-		workDir:        workDir,
-		modelName:      modelName,
-		spinner:        sp,
-		input:          ti,
-		outerCtx:       outerCtx,
-		eng:            eng,
-		skillsIndex:    idx,
-		viewTop:        -1, // -1 = 自动跟随底部
-		phase:          phaseWelcome,
-		manager:        mgr,
-		session:        sess,
-		todoStore:      todoStore,
-		todoBlockStart: -1,
-		planMode:       planning.PlanModeDefault,
-		planReviewing:  false,
+		workDir:       workDir,
+		modelName:     modelName,
+		spinner:       sp,
+		input:         ti,
+		outerCtx:      outerCtx,
+		eng:           eng,
+		skillsIndex:   idx,
+		viewTop:       -1, // -1 = 自动跟随底部
+		phase:         phaseWelcome,
+		manager:       mgr,
+		session:       sess,
+		todoStore:     todoStore,
+		planMode:      planning.PlanModeDefault,
+		planReviewing: false,
 	}
 	if sess != nil {
 		m.sessionID = sess.SessionID()
