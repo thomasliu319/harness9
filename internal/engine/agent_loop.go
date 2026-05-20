@@ -199,6 +199,18 @@ func (e *AgentEngine) runLoop(ctx context.Context, userPrompt string, logPrefix 
 		}
 	}
 
+	// Plan Mode：将规划行为约束注入用户 prompt，确保 LLM 只分析和输出 todo 计划，不执行任何写操作。
+	if planMode == planning.PlanModePlan {
+		userPrompt = "[PLAN MODE ACTIVE]\n\n" +
+			"You are in Plan Mode. Your ONLY job is to analyze the request and produce a structured todo plan.\n\n" +
+			"Rules:\n" +
+			"- Use read_file and bash (read-only: ls, cat, find, grep) to explore the codebase if needed\n" +
+			"- Do NOT create files, write files, run build/install commands, or make any changes\n" +
+			"- When ready, call todo_write with a complete step-by-step plan (each item = one concrete task)\n" +
+			"- After calling todo_write, summarize the plan in plain text and stop\n\n" +
+			"User request:\n" + userPrompt
+	}
+
 	contextHistory, startLen := e.loadHistoryWith(ctx, userPrompt, sess)
 
 	// 结束时将 TodoStore 持久化到 Session（write-replace）。
