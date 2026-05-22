@@ -6,7 +6,7 @@
 
 ![harness9 欢迎界面](welcome.png)
 
-![harness9 对话界面](quick_start.png)
+![harness9 对话界面](quickstart.png)
 
 ---
 
