@@ -126,3 +126,60 @@ func TestManager_CreatesDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestManager_DeleteSession_CleansOffloadDir(t *testing.T) {
+	ctx := context.Background()
+	dbDir := t.TempDir()
+	offloadBase := t.TempDir()
+
+	mgr, err := memory.NewManager(
+		filepath.Join(dbDir, "test.db"),
+		memory.WithToolResultsDir(offloadBase),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	sess, err := mgr.NewSession(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessID := sess.SessionID()
+
+	// 模拟 offload 文件写入
+	offloadDir := filepath.Join(offloadBase, sessID)
+	if err := os.MkdirAll(offloadDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(offloadDir, "tool1.txt"), []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 删除 session
+	if err := mgr.DeleteSession(ctx, sessID); err != nil {
+		t.Fatalf("DeleteSession error: %v", err)
+	}
+
+	// offload 目录应已被清理
+	if _, err := os.Stat(offloadDir); !os.IsNotExist(err) {
+		t.Error("offload directory should be removed after session deletion")
+	}
+}
+
+func TestManager_DeleteSession_NoToolResultsDir_NoError(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	// 不设置 WithToolResultsDir，DeleteSession 不应出错
+	mgr, err := memory.NewManager(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	sess, _ := mgr.NewSession(ctx)
+	if err := mgr.DeleteSession(ctx, sess.SessionID()); err != nil {
+		t.Fatalf("DeleteSession without toolResultsDir should not error: %v", err)
+	}
+}

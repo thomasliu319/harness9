@@ -48,12 +48,22 @@ CREATE INDEX IF NOT EXISTS idx_todos_session ON session_todos(session_id);
 // Manager 持有共享 SQLite 连接，管理所有会话的生命周期。
 // 整个进程共享一个 Manager 实例。
 type Manager struct {
-	db *sql.DB
+	db             *sql.DB
+	toolResultsDir string // 可选，非空时 DeleteSession 级联清理
+}
+
+// ManagerOption 配置 Manager 的可选行为。
+type ManagerOption func(*Manager)
+
+// WithToolResultsDir 设置工具输出 offload 文件的根目录。
+// 设置后，DeleteSession 会删除对应 session 的 offload 子目录。
+func WithToolResultsDir(dir string) ManagerOption {
+	return func(m *Manager) { m.toolResultsDir = dir }
 }
 
 // NewManager 打开（或创建）指定路径的 SQLite 数据库，初始化 Schema。
 // 父目录不存在时自动创建。
-func NewManager(dbPath string) (*Manager, error) {
+func NewManager(dbPath string, opts ...ManagerOption) (*Manager, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
 		return nil, fmt.Errorf("创建数据库目录: %w", err)
 	}
@@ -74,7 +84,11 @@ func NewManager(dbPath string) (*Manager, error) {
 		db.Close()
 		return nil, fmt.Errorf("初始化 schema: %w", err)
 	}
-	return &Manager{db: db}, nil
+	m := &Manager{db: db}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m, nil
 }
 
 // NewSession 生成 UUID，在数据库中创建新会话记录，返回绑定该会话的 Session。
@@ -133,10 +147,14 @@ func (m *Manager) ListSessions(ctx context.Context) ([]SessionInfo, error) {
 }
 
 // DeleteSession 删除指定会话及其所有消息（通过 ON DELETE CASCADE）。
+// 若设置了 toolResultsDir，还会级联清理对应 session 的 offload 子目录。
 func (m *Manager) DeleteSession(ctx context.Context, id string) error {
 	_, err := m.db.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("删除会话: %w", err)
+	}
+	if m.toolResultsDir != "" {
+		_ = os.RemoveAll(filepath.Join(m.toolResultsDir, id))
 	}
 	return nil
 }
