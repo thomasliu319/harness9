@@ -261,7 +261,7 @@ func (m tuiModel) handleEvent(evt engine.Event) (tea.Model, tea.Cmd) {
 		if m.pendingTools == nil {
 			m.pendingTools = make(map[string]pendingToolInfo)
 		}
-		m.pendingTools[tc.ID] = pendingToolInfo{name: tc.Name, args: tc.Arguments, start: time.Now()}
+		m.pendingTools[tc.ID] = pendingToolInfo{name: tc.Name, args: tc.Arguments}
 		// 同时更新 currentTool/toolArgs/toolStart 供 spinner 展示（始终展示最近启动的工具）
 		m.currentTool = tc.Name
 		m.toolStart = time.Now()
@@ -269,22 +269,22 @@ func (m tuiModel) handleEvent(evt engine.Event) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(readNextEvent(m.eventCh), tea.Cmd(m.spinner.Tick))
 
 	case engine.EventToolResult:
-		result, _ := evt.Data.(schema.ToolResult)
+		data, _ := evt.Data.(engine.ToolResultData)
+		result := data.Result
+		// 引擎侧在 toolDone 回调中精确计算耗时，直接使用，不受 channel 传输延迟影响
+		elapsed := data.Duration.Round(time.Millisecond)
 
-		// 从 pendingTools 按 ToolCallID 精准取回启动信息，避免并发覆盖导致名称丢失
+		// 从 pendingTools 按 ToolCallID 精准取回名称和参数，避免并发覆盖导致名称丢失
 		var toolName string
 		var toolArgs json.RawMessage
-		var elapsed time.Duration
 		if info, ok := m.pendingTools[result.ToolCallID]; ok {
 			toolName = info.name
 			toolArgs = info.args
-			elapsed = time.Since(info.start).Round(time.Millisecond)
 			delete(m.pendingTools, result.ToolCallID)
 		} else {
-			// 兜底：pendingTools 查不到时退回旧逻辑
+			// 兜底：pendingTools 查不到时退回 currentTool（单工具场景）
 			toolName = m.currentTool
 			toolArgs = m.toolArgs
-			elapsed = time.Since(m.toolStart).Round(time.Millisecond)
 		}
 
 		// 工具完成行：展示 tool_name(args摘要) — 耗时

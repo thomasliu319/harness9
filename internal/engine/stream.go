@@ -26,7 +26,7 @@ const (
 	// EventToolStart 表示引擎开始执行一个工具调用。Data 类型为 schema.ToolCall。
 	EventToolStart EventType = "tool_start"
 
-	// EventToolResult 表示一个工具执行完成。Data 类型为 schema.ToolResult。
+	// EventToolResult 表示一个工具执行完成。Data 类型为 ToolResultData。
 	EventToolResult EventType = "tool_result"
 
 	// EventDone 表示 agent loop 正常结束。
@@ -64,7 +64,7 @@ type Event struct {
 	Turn int       `json:"turn,omitempty"`
 	// Data 事件载荷，类型随 Type 变化：
 	//   EventActionDelta → string, EventToolStart → schema.ToolCall,
-	//   EventToolResult → schema.ToolResult, EventDone → nil, EventError → string,
+	//   EventToolResult → ToolResultData, EventDone → nil, EventError → string,
 	//   EventTokenUpdate → TokenUpdateData, EventCompaction → CompactionData
 	Data any `json:"data,omitempty"`
 }
@@ -75,6 +75,14 @@ type TokenUpdateData struct {
 	EstimatedTokens int `json:"estimated_tokens"`
 	// ContextWindow 当前模型的最大 context window（tokens）。0 表示未知。
 	ContextWindow int `json:"context_window"`
+}
+
+// ToolResultData 是 EventToolResult 事件的载荷，携带工具执行结果和引擎侧精确耗时。
+type ToolResultData struct {
+	// Result 是工具执行的结果。
+	Result schema.ToolResult
+	// Duration 是工具在引擎侧的精确执行耗时（从工具函数入口到返回的真实时长，不含 channel 传输延迟）。
+	Duration time.Duration
 }
 
 // CompactionData 是 EventCompaction 事件的载荷。
@@ -119,7 +127,7 @@ func (e *AgentEngine) RunStream(ctx context.Context, userPrompt string) (<-chan 
 			},
 			toolDone: func(turn int, tc schema.ToolCall, result schema.ToolResult, d time.Duration) {
 				log.Print(logfmt.FormatToolDone("engine-stream", turn, tc, result, d))
-				sendEvent(ctx, ch, Event{Type: EventToolResult, Turn: turn, Data: result})
+				sendEvent(ctx, ch, Event{Type: EventToolResult, Turn: turn, Data: ToolResultData{Result: result, Duration: d}})
 			},
 			tokenUpdate: func(tokens, window int) {
 				sendEvent(ctx, ch, Event{Type: EventTokenUpdate, Data: TokenUpdateData{

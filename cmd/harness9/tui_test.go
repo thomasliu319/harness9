@@ -81,11 +81,10 @@ func TestEventToolResult_ClearsCurrentToolAndAppendsLine(t *testing.T) {
 	m := newTestModel()
 	m.running = true
 	m.currentTool = "bash"
-	m.toolStart = time.Now().Add(-100 * time.Millisecond)
 	m.lines = []string{}
 
-	result := schema.ToolResult{Output: "ok", IsError: false}
-	m = applyUpdate(m, eventMsg{Type: engine.EventToolResult, Data: result})
+	data := engine.ToolResultData{Result: schema.ToolResult{Output: "ok", IsError: false}, Duration: 100 * time.Millisecond}
+	m = applyUpdate(m, eventMsg{Type: engine.EventToolResult, Data: data})
 
 	if m.currentTool != "" {
 		t.Errorf("currentTool should be cleared, got %q", m.currentTool)
@@ -102,11 +101,10 @@ func TestEventToolResult_ErrorMark(t *testing.T) {
 	m := newTestModel()
 	m.running = true
 	m.currentTool = "bash"
-	m.toolStart = time.Now()
 	m.lines = []string{}
 
-	result := schema.ToolResult{Output: "failed", IsError: true}
-	m = applyUpdate(m, eventMsg{Type: engine.EventToolResult, Data: result})
+	data := engine.ToolResultData{Result: schema.ToolResult{Output: "failed", IsError: true}, Duration: 0}
+	m = applyUpdate(m, eventMsg{Type: engine.EventToolResult, Data: data})
 
 	if len(m.lines) == 0 {
 		t.Fatal("completion line should be appended")

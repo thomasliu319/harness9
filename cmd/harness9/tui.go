@@ -172,11 +172,11 @@ type tuiModel struct {
 	autoExecStuck int
 }
 
-// pendingToolInfo 记录单个并发工具调用的启动信息，用于 EventToolResult 时精确还原名称和耗时。
+// pendingToolInfo 记录单个并发工具调用的启动信息，用于 EventToolResult 时精确还原名称和参数。
+// 耗时由引擎侧在 toolDone 回调中精确计算并通过 ToolResultData.Duration 携带，此处不再记录 start。
 type pendingToolInfo struct {
-	name  string
-	args  json.RawMessage
-	start time.Time
+	name string
+	args json.RawMessage
 }
 
 // newTUIModel 构造已初始化的 tuiModel：输入框聚焦，spinner 使用 Dot 样式。

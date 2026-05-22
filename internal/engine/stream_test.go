@@ -261,12 +261,15 @@ func TestRunStream_ToolResultDataIsToolResult(t *testing.T) {
 
 	for _, evt := range collectEvents(stream) {
 		if evt.Type == EventToolResult {
-			result, ok := evt.Data.(schema.ToolResult)
+			data, ok := evt.Data.(ToolResultData)
 			if !ok {
-				t.Fatalf("EventToolResult.Data should be schema.ToolResult, got %T", evt.Data)
+				t.Fatalf("EventToolResult.Data should be ToolResultData, got %T", evt.Data)
 			}
-			if result.Output != "tool output here" {
-				t.Errorf("expected tool output 'tool output here', got %q", result.Output)
+			if data.Result.Output != "tool output here" {
+				t.Errorf("expected tool output 'tool output here', got %q", data.Result.Output)
+			}
+			if data.Duration < 0 {
+				t.Errorf("Duration should be non-negative, got %v", data.Duration)
 			}
 			return
 		}
