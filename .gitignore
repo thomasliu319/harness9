@@ -18,3 +18,9 @@ docs/specs/
 
 # Deep Research 生成的调研报告
 reports/
+
+# harness9 运行时数据（会话 DB、tool_results offload、plans）
+.harness9/
+
+# 本地临时目录
+tmp/

@@ -34,9 +34,29 @@ type AnthropicProvider struct {
 	model string
 	// maxTokens 单次响应的最大输出 Token 数。Anthropic API 要求必须指定此参数。
 	maxTokens int64
+	// thinkingBudget 启用 extended thinking 时的最大推理 token 预算。0 表示禁用。
+	thinkingBudget int64
 }
 
-func NewAnthropicProvider(model string, maxTokens int64) (*AnthropicProvider, error) {
+// AnthropicOption 是 AnthropicProvider 的功能选项类型。
+type AnthropicOption func(*AnthropicProvider)
+
+// WithThinkingBudget 启用 Anthropic extended thinking，并设置推理 token 预算上限。
+// budget 为 0 时禁用 extended thinking。
+// Anthropic API 要求 budget_tokens ≥ 1024，小于该值时自动提升到 1024。
+func WithThinkingBudget(budget int64) AnthropicOption {
+	return func(p *AnthropicProvider) {
+		if budget > 0 && budget < 1024 {
+			budget = 1024
+		}
+		p.thinkingBudget = budget
+	}
+}
+
+// NewAnthropicProvider 创建并返回 AnthropicProvider 实例。
+// 从环境变量读取 ANTHROPIC_API_KEY 和 ANTHROPIC_BASE_URL 完成认证配置；
+// maxTokens <= 0 时自动设为 4096（Anthropic API 要求必须指定此参数）。
+func NewAnthropicProvider(model string, maxTokens int64, opts ...AnthropicOption) (*AnthropicProvider, error) {
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	if apiKey == "" {
 		return nil, fmt.Errorf("请设置 ANTHROPIC_API_KEY 环境变量")
@@ -48,11 +68,15 @@ func NewAnthropicProvider(model string, maxTokens int64) (*AnthropicProvider, er
 	if maxTokens <= 0 {
 		maxTokens = 4096
 	}
-	return &AnthropicProvider{
+	p := &AnthropicProvider{
 		client:    anthropic.NewClient(option.WithAPIKey(apiKey), option.WithBaseURL(baseURL)),
 		model:     model,
 		maxTokens: maxTokens,
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p, nil
 }
 
 // Generate 实现 LLMProvider 接口的阻塞式调用。
@@ -82,6 +106,10 @@ func (p *AnthropicProvider) Generate(ctx context.Context, msgs []schema.Message,
 
 	if len(anthropicTools) > 0 {
 		params.Tools = anthropicTools
+	}
+
+	if p.thinkingBudget > 0 {
+		params.Thinking = anthropic.ThinkingConfigParamOfEnabled(p.thinkingBudget)
 	}
 
 	resp, err := p.client.Messages.New(ctx, params)
@@ -126,6 +154,10 @@ func (p *AnthropicProvider) GenerateStream(ctx context.Context, msgs []schema.Me
 		params.Tools = anthropicTools
 	}
 
+	if p.thinkingBudget > 0 {
+		params.Thinking = anthropic.ThinkingConfigParamOfEnabled(p.thinkingBudget)
+	}
+
 	stream := p.client.Messages.NewStreaming(ctx, params)
 
 	ch := make(chan schema.StreamChunk)
@@ -150,8 +182,11 @@ func (p *AnthropicProvider) GenerateStream(ctx context.Context, msgs []schema.Me
 
 			case "content_block_start":
 				cb := event.AsContentBlockStart()
-				if cb.ContentBlock.Type == "tool_use" {
+				switch cb.ContentBlock.Type {
+				case "tool_use":
 					toolAccs.start(int(cb.Index), cb.ContentBlock.ID, cb.ContentBlock.Name)
+				case "thinking", "redacted_thinking":
+					// thinking 内容通过后续 thinking_delta 事件增量到达，此处无需初始化。
 				}
 
 			case "content_block_delta":
@@ -163,6 +198,14 @@ func (p *AnthropicProvider) GenerateStream(ctx context.Context, msgs []schema.Me
 					if !sendStreamChunk(ctx, ch, schema.StreamChunk{
 						Type:  schema.StreamChunkTextDelta,
 						Delta: td.Text,
+					}) {
+						return
+					}
+				case "thinking_delta":
+					td := delta.Delta.AsThinkingDelta()
+					if !sendStreamChunk(ctx, ch, schema.StreamChunk{
+						Type:  schema.StreamChunkThinkingDelta,
+						Delta: td.Thinking,
 					}) {
 						return
 					}
@@ -306,6 +349,9 @@ func (p *AnthropicProvider) extractMessage(content []anthropic.ContentBlockUnion
 	return resultMsg
 }
 
+// extractSchemaFields 从 JSON Schema map 中提取 properties 和 required 字段。
+// 同时兼容 []string 和 []interface{} 两种 required 数组类型，
+// 后者在 JSON 反序列化为 interface{} 时常见。
 func extractSchemaFields(input interface{}) (map[string]any, []string, error) {
 	m, ok := input.(map[string]interface{})
 	if !ok {

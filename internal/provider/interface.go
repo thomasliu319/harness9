@@ -38,11 +38,10 @@ type LLMProvider interface {
 	// GenerateStream 以流式方式调用 LLM，通过 channel 逐 chunk 返回响应增量。
 	//
 	// 参数与 Generate 完全一致。返回的 channel 中每个 chunk 代表 LLM 的一次增量产出：
-	//   - StreamChunkTextDelta: 文本增量（逐 token）
-	//   - StreamChunkToolCallStart: 新工具调用开始（含 ID、Name）
-	//   - StreamChunkToolCallDelta: 工具参数 JSON 增量
-	//   - StreamChunkDone: 流结束，携带完整的 Message
-	//   - StreamChunkError: 出错
+	//   - StreamChunkTextDelta:     文本增量（逐 token）
+	//   - StreamChunkThinkingDelta: 推理增量（逐 token，仅支持 thinking 的模型）
+	//   - StreamChunkDone:          流结束，携带完整的 Message
+	//   - StreamChunkError:         出错
 	//
 	// 返回的 channel 会在流结束时自动关闭。调用方必须从 channel 读取直到关闭，
 	// 以确保底层 HTTP 连接被正确释放。

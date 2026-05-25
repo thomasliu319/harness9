@@ -245,8 +245,30 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handleEvent 处理单个 engine.Event，返回更新后的模型和下一个 tea.Cmd。
 func (m tuiModel) handleEvent(evt engine.Event) (tea.Model, tea.Cmd) {
 	switch evt.Type {
+	case engine.EventThinkingDelta:
+		delta, _ := evt.Data.(string)
+		if m.thinkingLineStart == -1 {
+			// 首个 thinking delta：追加标题行并记录起始位置。
+			// 若 pendingReplyStart 指向末尾的空行占位符（由 dispatch 插入），
+			// 先将其移除，避免 thinking 块头部出现无意义的空行。
+			if m.pendingReplyStart < len(m.lines) && m.lines[m.pendingReplyStart] == "" {
+				m.lines = m.lines[:m.pendingReplyStart]
+			}
+			m.lines = append(m.lines, thinkingHeaderStyle.Render("« thinking »"))
+			m.thinkingLineStart = len(m.lines) - 1
+		}
+		m.pendingThinking += delta
+		// 将 thinking 内容行覆写到 lines[thinkingLineStart+1:]
+		thinkingLines := renderThinkingLines(m.pendingThinking, m.width)
+		m.lines = append(m.lines[:m.thinkingLineStart+1], thinkingLines...)
+		return m, readNextEvent(m.eventCh)
+
 	case engine.EventActionDelta:
 		delta, _ := evt.Data.(string)
+		// 如果 thinking 块尚未结束，先 flush
+		if m.pendingThinking != "" {
+			m = m.flushPendingThinking()
+		}
 		m.pendingReply += delta
 		// 原始文本回写到 lines，等工具边界时用 glamour 统一渲染
 		rawLines := strings.Split(m.pendingReply, "\n")
@@ -254,6 +276,10 @@ func (m tuiModel) handleEvent(evt engine.Event) (tea.Model, tea.Cmd) {
 		return m, readNextEvent(m.eventCh)
 
 	case engine.EventToolStart:
+		// thinking 块 flush 必须在 flushPendingReply 之前，避免行索引错乱
+		if m.pendingThinking != "" {
+			m = m.flushPendingThinking()
+		}
 		// 工具启动前先渲染当前累积的文本块
 		m = m.flushPendingReply()
 		tc, _ := evt.Data.(schema.ToolCall)
@@ -312,6 +338,9 @@ func (m tuiModel) handleEvent(evt engine.Event) (tea.Model, tea.Cmd) {
 		return m, readNextEvent(m.eventCh)
 
 	case engine.EventDone:
+		if m.pendingThinking != "" {
+			m = m.flushPendingThinking()
+		}
 		// flushPendingReply 在这里调用，将流式累积的 Markdown 文本渲染到 lines。
 		m = m.flushPendingReply()
 		if m.cancelFn != nil {
@@ -376,9 +405,15 @@ func (m tuiModel) handleEvent(evt engine.Event) (tea.Model, tea.Cmd) {
 
 	case engine.EventError:
 		errMsg, _ := evt.Data.(string)
-		// 丢弃未渲染的原始流式文本
-		m.lines = m.lines[:m.pendingReplyStart]
+		// 丢弃未渲染的流式缓冲（含 thinking 块）
+		if m.thinkingLineStart != -1 {
+			m.lines = m.lines[:m.thinkingLineStart]
+		} else {
+			m.lines = m.lines[:m.pendingReplyStart]
+		}
 		m.pendingReply = ""
+		m.pendingThinking = ""
+		m.thinkingLineStart = -1
 		if m.cancelFn != nil {
 			m.cancelFn()
 		}
@@ -566,6 +601,92 @@ func (m tuiModel) flushPendingReply() tuiModel {
 	return m
 }
 
+// renderThinkingLines 将推理文本按段落分割并在 width 内 word-wrap，每行加 "  │ " 前缀并应用暗色样式。
+// width 为终端列数（m.width）；0 时回退为不折行。
+func renderThinkingLines(text string, width int) []string {
+	const prefix = "  │ "
+	const prefixCols = 4 // "  │ " 占用的显示列数
+
+	wrapWidth := width - prefixCols - 1 // 右侧留 1 列边距
+	if wrapWidth < 20 {
+		wrapWidth = 0 // 终端过窄时不折行
+	}
+
+	var out []string
+	for _, para := range strings.Split(text, "\n") {
+		for _, line := range thinkingWordWrap(para, wrapWidth) {
+			out = append(out, thinkingLineStyle.Render(prefix+line))
+		}
+	}
+	if len(out) == 0 {
+		out = []string{thinkingLineStyle.Render(prefix)}
+	}
+	return out
+}
+
+// thinkingWordWrap 将 text 按 width rune 数折行，保留词边界。
+// 超过 width 的单个词（如 URL）会被强制截断，避免溢出终端宽度。
+// width <= 0 时不折行，整段作为单行返回。
+func thinkingWordWrap(text string, width int) []string {
+	if width <= 0 || text == "" {
+		return []string{text}
+	}
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{""}
+	}
+
+	// hardBreak 将超长词按 width 强制截断为多段。
+	hardBreak := func(word string) []string {
+		runes := []rune(word)
+		var chunks []string
+		for len(runes) > width {
+			chunks = append(chunks, string(runes[:width]))
+			runes = runes[width:]
+		}
+		return append(chunks, string(runes))
+	}
+
+	var lines []string
+	line := words[0]
+	for _, word := range words[1:] {
+		if len([]rune(line))+1+len([]rune(word)) <= width {
+			line += " " + word
+		} else {
+			// 当前行满，先将超长单词硬截断再追加。
+			if len([]rune(word)) > width {
+				lines = append(lines, line)
+				chunks := hardBreak(word)
+				lines = append(lines, chunks[:len(chunks)-1]...)
+				line = chunks[len(chunks)-1]
+			} else {
+				lines = append(lines, line)
+				line = word
+			}
+		}
+	}
+	// 最后一行也需检查是否超长。
+	if len([]rune(line)) > width {
+		chunks := hardBreak(line)
+		lines = append(lines, chunks[:len(chunks)-1]...)
+		line = chunks[len(chunks)-1]
+	}
+	return append(lines, line)
+}
+
+// flushPendingThinking 追加 thinking 块结束行，并重置 thinking 缓冲和行索引。
+// 调用后 pendingReplyStart 更新为当前 lines 长度，后续 action 文本从此处开始。
+func (m tuiModel) flushPendingThinking() tuiModel {
+	if m.pendingThinking == "" {
+		return m
+	}
+	m.lines = append(m.lines, thinkingEndStyle.Render("  └ ──────────────────────────────"))
+	m.pendingThinking = ""
+	m.thinkingLineStart = -1
+	m.pendingReplyStart = len(m.lines)
+	return m
+}
+
 // renderMD 通过 glamour 将 Markdown 文本渲染为终端 ANSI 格式。
 // 降级策略：任何错误均原样返回原文。
 //
@@ -650,6 +771,8 @@ func (m tuiModel) dispatch(prompt string) (tuiModel, tea.Cmd) {
 	m.lines = append(m.lines, assistantStyle.Render("◆ harness9:"), "")
 	m.pendingReplyStart = len(m.lines) - 1
 	m.pendingReply = ""
+	m.thinkingLineStart = -1
+	m.pendingThinking = ""
 
 	ctx, cancel := context.WithCancel(m.outerCtx)
 	m.cancelFn = cancel

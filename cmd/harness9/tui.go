@@ -68,6 +68,11 @@ var (
 	tokenOKStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // < 50%: 绿
 	tokenWarnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // 50-80%: 黄
 	tokenHighStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // > 80%: 红
+
+	// Thinking 块样式 — 深灰色，视觉上明显弱于正文
+	thinkingHeaderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Italic(true) // « thinking »
+	thinkingLineStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))              // │ 内容行
+	thinkingEndStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("236"))              // └ 结束线
 )
 
 type tuiPhase int
@@ -121,6 +126,12 @@ type tuiModel struct {
 	// 替换 lines[pendingReplyStart:] 中的原始文本。
 	pendingReply      string
 	pendingReplyStart int
+
+	// Thinking 块流式状态：
+	// pendingThinking 累积当前轮次的推理文本；thinkingLineStart 记录 « thinking » 标题行在 lines 中的索引。
+	// thinkingLineStart == -1 表示本轮尚未开始 thinking 块。
+	pendingThinking   string
+	thinkingLineStart int
 
 	// Tab 斜杠命令补全状态
 	typedPrefix    string   // 首次按 Tab 时的输入前缀（非空表示正在补全循环中）
@@ -191,21 +202,22 @@ func newTUIModel(eng *engine.AgentEngine, idx *skills.Index, mgr *memory.Manager
 	ti.Focus()
 
 	m := tuiModel{
-		workDir:       workDir,
-		modelName:     modelName,
-		spinner:       sp,
-		input:         ti,
-		outerCtx:      outerCtx,
-		eng:           eng,
-		skillsIndex:   idx,
-		viewTop:       -1, // -1 = 自动跟随底部
-		phase:         phaseWelcome,
-		manager:       mgr,
-		session:       sess,
-		todoStore:     todoStore,
-		planMode:      planning.PlanModeDefault,
-		planReviewing: false,
-		pendingTools:  make(map[string]pendingToolInfo),
+		workDir:           workDir,
+		modelName:         modelName,
+		spinner:           sp,
+		input:             ti,
+		outerCtx:          outerCtx,
+		eng:               eng,
+		skillsIndex:       idx,
+		viewTop:           -1, // -1 = 自动跟随底部
+		phase:             phaseWelcome,
+		manager:           mgr,
+		session:           sess,
+		todoStore:         todoStore,
+		planMode:          planning.PlanModeDefault,
+		planReviewing:     false,
+		pendingTools:      make(map[string]pendingToolInfo),
+		thinkingLineStart: -1, // -1 = 本轮尚未开始 thinking 块
 	}
 	if sess != nil {
 		m.sessionID = sess.SessionID()
