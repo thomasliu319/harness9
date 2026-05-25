@@ -13,12 +13,16 @@ import (
 )
 
 // accentStyle 返回当前执行模式对应的强调色样式（accent style）：
+//   - shellMode → 亮绿色（shellModeAccentStyle #83）
 //   - PlanModeDefault → 青色（cyanStyle #81）
 //   - PlanModePlan / PlanModeAutoEdit → 琥珀黄（planAccentStyle #220）
 //
 // 此方法被 renderStatusBar、renderFooter、renderTodoLines 统一调用，
-// 确保颜色切换逻辑集中在单一位置，View 层无散落的 `if planMode ==` 判断。
+// 确保颜色切换逻辑集中在单一位置，View 层无散落的 if 判断。
 func (m tuiModel) accentStyle() lipgloss.Style {
+	if m.shellMode {
+		return shellModeAccentStyle
+	}
 	if m.planMode != planning.PlanModeDefault {
 		return planAccentStyle
 	}
@@ -26,9 +30,13 @@ func (m tuiModel) accentStyle() lipgloss.Style {
 }
 
 // activeStatusBarStyle 返回当前模式下的状态栏背景样式：
+//   - shellMode → 深绿底（shellStatusBarStyle #22），与 Plan Mode 橙底明确区分
 //   - Default → 深灰底（statusBarStyle #235）
 //   - Plan/AutoEdit → 深橙底（planStatusBarStyle #94），给用户明确的视觉信号
 func (m tuiModel) activeStatusBarStyle() lipgloss.Style {
+	if m.shellMode {
+		return shellStatusBarStyle
+	}
 	if m.planMode != planning.PlanModeDefault {
 		return planStatusBarStyle
 	}
@@ -193,7 +201,9 @@ func (m tuiModel) renderStatusBar() string {
 	}
 	modeLabel := m.planMode.Label()
 	var modePart string
-	if modeLabel != "" {
+	if m.shellMode {
+		modePart = dimStyle.Render("  │  ") + shellModeLabelInBarStyle.Render("SHELL")
+	} else if modeLabel != "" {
 		modePart = dimStyle.Render("  │  ") + planModeLabelStyle.Render(modeLabel)
 	}
 
@@ -251,8 +261,16 @@ func (m tuiModel) renderPlanReviewDialog() string {
 	return planReviewBoxStyle.Render(sb.String())
 }
 
-// renderInput 渲染输入行。Plan Mode 下用琥珀色高亮 › 提示符。
+// renderInput 渲染输入行。
+//   - Shell 模式：显示 [SHELL] 黄色徽章 + 绿色 $ 提示符
+//   - Plan Mode：琥珀色 › 提示符
+//   - 默认：普通 › 提示符
 func (m tuiModel) renderInput() string {
+	if m.shellMode {
+		badge := shellModeTagStyle.Render("SHELL")
+		prompt := shellModePromptStyle.Render(" $ ")
+		return " " + badge + prompt + m.input.View()
+	}
 	if m.planMode != planning.PlanModeDefault {
 		return "  " + planAccentStyle.Render("›") + " " + m.input.View()
 	}
@@ -260,8 +278,17 @@ func (m tuiModel) renderInput() string {
 }
 
 // renderFooter 渲染底部快捷键提示行。
-// 优先级：补全提示 > 滚动位置提示 > 默认快捷键
+// 优先级：Shell 模式提示 > 补全提示 > 滚动位置提示 > 默认快捷键
 func (m tuiModel) renderFooter() string {
+	if m.shellMode {
+		a := shellModeAccentStyle
+		return "  " +
+			a.Render("enter") + dimStyle.Render(" 执行  ") +
+			a.Render("esc") + dimStyle.Render(" 取消  ") +
+			dimStyle.Render("输出自动注入 LLM 上下文  ") +
+			a.Render("ctrl+c") + dimStyle.Render(" 退出")
+	}
+
 	if m.completionHint != "" {
 		return m.completionHint
 	}

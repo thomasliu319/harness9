@@ -73,6 +73,31 @@ var (
 	thinkingHeaderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Italic(true) // « thinking »
 	thinkingLineStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))              // │ 内容行
 	thinkingEndStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("236"))              // └ 结束线
+
+	// Shell 模式样式 — 用户侧 "!" 前缀直接执行命令
+	shellCmdStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("33")).Bold(true) // 黄色加粗：$ cmd
+	shellOutputStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))           // 浅灰：输出行
+	shellOKStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("34"))            // 绿色：✓ 完成
+	shellErrStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("160"))           // 红色：✗ 非零退出
+
+	// Shell 模式激活时的 UI 指示器样式（与对话内容渲染样式分开）
+	// 状态栏背景切换为深绿色，与默认（深灰 235）和 Plan Mode（深橙 94）明确区分
+	shellStatusBarStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("22")).
+				Foreground(lipgloss.Color("120")).
+				Padding(0, 1)
+	// 输入区 [SHELL] 徽章：深橄榄背景 + 亮黄文字，视觉上明显但不刺眼
+	shellModeTagStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("58")).
+				Foreground(lipgloss.Color("226")).
+				Bold(true).
+				Padding(0, 1)
+	// Shell 模式下状态栏内 accent 文字（亮绿色，在深绿背景上可读）
+	shellModeAccentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("83"))
+	// shellModePromptStyle 是 renderInput 中 "$ " 提示符的样式，预计算避免每帧 .Bold(true) 分配。
+	shellModePromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("83")).Bold(true)
+	// Shell 模式下状态栏内 SHELL 标签
+	shellModeLabelInBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("83")).Bold(true)
 )
 
 type tuiPhase int
@@ -181,6 +206,14 @@ type tuiModel struct {
 	// autoExecStuck 记录连续无进度的 dispatch 次数。
 	// 达到 3 次后判定为停滞（LLM 空转），停止自动执行并提示用户手动介入。
 	autoExecStuck int
+
+	// pendingShellOutput 缓存本轮对话中用户通过 "!" 前缀执行的 Shell 命令及其输出，
+	// 在用户下一次向 LLM 发送消息时前置注入上下文，供 LLM 引用命令结果。
+	pendingShellOutput []string
+
+	// shellMode 为 true 时表示输入框当前以 "!" 开头，处于 Shell 执行模式。
+	// View 层依此切换状态栏背景色、输入区徽章、footer 快捷键提示。
+	shellMode bool
 }
 
 // pendingToolInfo 记录单个并发工具调用的启动信息，用于 EventToolResult 时精确还原名称和参数。

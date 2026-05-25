@@ -53,6 +53,26 @@ cd /your/project && harness9
 
 详见 [TUI 交互界面实现原理](docs/核心功能/tui.md)。
 
+### Shell 执行（`!` 前缀）
+
+在对话框中直接运行 Bash 命令，无需切换终端：
+
+```
+› !git log --oneline -5
+$ git log --oneline -5
+a1b2c3d feat: add shell execution
+...
+  ✓ 完成 — 12ms
+```
+
+输入 `!` 时 TUI 自动切换 Shell 模式（状态栏变深绿、输入区显示 `[SHELL] $` 徽章）。命令输出追加到对话流，并在下次向 LLM 发送消息时自动注入上下文，Agent 可直接引用命令结果进行推理。
+
+- 异步执行，不阻塞 TUI，默认 30s 超时
+- vim/ssh 等交互式命令自动拦截，提示在独立终端运行
+- `Esc` 退出 Shell 模式，`Enter` 执行命令
+
+详见 [Shell 执行功能技术方案](docs/核心功能/shell-execution.md)。
+
 ### Context Engineering（上下文管理）
 
 对话历史自动持久化到 SQLite（`~/.harness9/sessions.db`），进程重启后可通过 `/resume` 恢复。
@@ -199,7 +219,7 @@ for evt := range stream {
 
 | 模块             | 说明                                                                                      | 状态  |
 | -------------- | --------------------------------------------------------------------------------------- | --- |
-| **TUI**        | 全屏 TUI（Bubbletea）：双 Phase、流式输出、Spinner + 精确耗时、Tab 补全、Token 用量实时展示                      | ✅   |
+| **TUI**        | 全屏 TUI（Bubbletea）：双 Phase、流式输出、Spinner + 精确耗时、Tab 补全、Token 用量实时展示、Shell 执行模式（`!` 前缀）| ✅   |
 | **Engine**     | 标准 ReAct 主循环，阻塞 + 流式双模式，EventTokenUpdate / EventCompaction / EventToolResult（精确耗时）事件   | ✅   |
 | **Hooks**      | 工具拦截器：OffloadHook（超大输出 offload）+ FilePlanWriter（计划持久化）+ HookRegistry（洋葱模型）               | ✅   |
 | **Planning**   | Plan Mode（先规划后执行）、TodoStore、todo_write 工具、PlanWriter 接口、工具层权限过滤、自动续跑 + 停滞检测           | ✅   |
@@ -259,6 +279,7 @@ harness9/
 | [Context Engineering 技术方案](docs/核心功能/context-engineering.md) | SQLiteSession、SummarizationCompactor、Token 估算、并发安全设计    |
 | [Planning 模块实现原理](docs/核心功能/planning.md)                      | Plan Mode、TodoStore、工具层权限控制、自动续跑、停滞检测、跨会话持久化            |
 | [文件系统能力技术方案](docs/核心功能/file-system.md)                         | OffloadHook、FilePlanWriter、read_file 分页、Session GC、Hooks 扩展 |
+| [Shell 执行功能技术方案](docs/核心功能/shell-execution.md)                   | `!` 前缀触发、异步执行机制、LLM 上下文注入、截断策略、交互式命令拦截          |
 | [AGENTS.md](AGENTS.md)                                       | 项目开发规范、编码标准、架构决策                                        |
 
 

@@ -621,6 +621,417 @@ func TestThinkingWordWrap_FirstWordExceedsWidth(t *testing.T) {
 	}
 }
 
+// --- Shell 模式测试 ---
+
+func TestShellExec_EmptyCmd_Noop(t *testing.T) {
+	m := newTestModel()
+	m.input.SetValue("!")
+	initialLines := len(m.lines)
+
+	m = applyUpdate(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// 空命令：不追加任何输出行
+	if len(m.lines) != initialLines {
+		t.Errorf("empty '!' should not append lines, got %d extra", len(m.lines)-initialLines)
+	}
+}
+
+func TestShellExec_InteractiveCmd_ShowsError(t *testing.T) {
+	m := newTestModel()
+	m.input.SetValue("!vim file.go")
+
+	m = applyUpdate(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// 应该有 "$ vim file.go" 行和拒绝错误行
+	if len(m.lines) < 2 {
+		t.Fatalf("expected at least 2 lines, got %d", len(m.lines))
+	}
+	var hasCmdLine, hasErrLine bool
+	for _, line := range m.lines {
+		if strings.Contains(line, "vim file.go") {
+			hasCmdLine = true
+		}
+		if strings.Contains(line, "交互式终端") {
+			hasErrLine = true
+		}
+	}
+	if !hasCmdLine {
+		t.Error("expected '$ vim file.go' in output")
+	}
+	if !hasErrLine {
+		t.Error("expected interactive terminal error message")
+	}
+}
+
+func TestShellExec_NormalCmd_AppendsCmdLine(t *testing.T) {
+	m := newTestModel()
+	m.input.SetValue("!echo hello")
+	initialLines := len(m.lines)
+
+	m = applyUpdate(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// 应该追加 "$ echo hello" 行
+	if len(m.lines) <= initialLines {
+		t.Fatal("expected at least one line appended for shell command")
+	}
+	var hasCmdLine bool
+	for _, line := range m.lines {
+		if strings.Contains(line, "echo hello") {
+			hasCmdLine = true
+			break
+		}
+	}
+	if !hasCmdLine {
+		t.Error("expected '$ echo hello' line in scrollback")
+	}
+	// phase 应切换为 phaseChat
+	if m.phase != phaseChat {
+		t.Errorf("phase should be phaseChat after '!' command, got %v", m.phase)
+	}
+}
+
+func TestShellExec_DoesNotShowUserPrefix(t *testing.T) {
+	m := newTestModel()
+	m.input.SetValue("!git status")
+
+	m = applyUpdate(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	for _, line := range m.lines {
+		if strings.Contains(line, "▶ You:") {
+			t.Error("shell command should not show '▶ You:' prefix")
+		}
+	}
+}
+
+func TestShellResultMsg_SuccessRendersOutput(t *testing.T) {
+	m := newTestModel()
+
+	m = applyUpdate(m, shellResultMsg{
+		cmd:    "echo hi",
+		output: "hi\n",
+		isErr:  false,
+		dur:    5 * time.Millisecond,
+	})
+
+	var hasOutput, hasOK bool
+	for _, line := range m.lines {
+		if strings.Contains(line, "hi") {
+			hasOutput = true
+		}
+		if strings.Contains(line, "✓") {
+			hasOK = true
+		}
+	}
+	if !hasOutput {
+		t.Error("expected output 'hi' in scrollback")
+	}
+	if !hasOK {
+		t.Error("expected ✓ success line for zero-exit command")
+	}
+}
+
+func TestShellResultMsg_ErrorRendersOutput(t *testing.T) {
+	m := newTestModel()
+
+	m = applyUpdate(m, shellResultMsg{
+		cmd:    "false",
+		output: "",
+		isErr:  true,
+		dur:    2 * time.Millisecond,
+	})
+
+	var hasErr bool
+	for _, line := range m.lines {
+		if strings.Contains(line, "✗") {
+			hasErr = true
+			break
+		}
+	}
+	if !hasErr {
+		t.Error("expected ✗ error line for non-zero-exit command")
+	}
+}
+
+func TestShellResultMsg_LongOutput_Truncated(t *testing.T) {
+	m := newTestModel()
+	longOutput := strings.Repeat("x", 5000)
+
+	m = applyUpdate(m, shellResultMsg{
+		cmd:    "cat bigfile",
+		output: longOutput,
+		isErr:  false,
+		dur:    10 * time.Millisecond,
+	})
+
+	var hasTruncation bool
+	for _, line := range m.lines {
+		if strings.Contains(line, "已截断") {
+			hasTruncation = true
+			break
+		}
+	}
+	if !hasTruncation {
+		t.Error("output > 4096 bytes should be truncated with a notice")
+	}
+}
+
+func TestShellResultMsg_BuffersPendingOutput(t *testing.T) {
+	m := newTestModel()
+
+	m = applyUpdate(m, shellResultMsg{
+		cmd:    "git log --oneline",
+		output: "abc1234 feat: something\n",
+		isErr:  false,
+		dur:    3 * time.Millisecond,
+	})
+
+	if len(m.pendingShellOutput) != 1 {
+		t.Fatalf("expected 1 pending shell output entry, got %d", len(m.pendingShellOutput))
+	}
+	if !strings.Contains(m.pendingShellOutput[0], "git log --oneline") {
+		t.Errorf("pending entry should contain command, got %q", m.pendingShellOutput[0])
+	}
+	if !strings.Contains(m.pendingShellOutput[0], "abc1234") {
+		t.Errorf("pending entry should contain output, got %q", m.pendingShellOutput[0])
+	}
+}
+
+func TestShellResultMsg_LargeOutput_TruncatedAtStorage(t *testing.T) {
+	// 验证 W2：超过 maxShellContextLen 的输出在存入 pendingShellOutput 时已截断
+	m := newTestModel()
+	largeOutput := strings.Repeat("a", maxShellContextLen+100)
+
+	m = applyUpdate(m, shellResultMsg{
+		cmd:    "cat bigfile",
+		output: largeOutput,
+		isErr:  false,
+		dur:    5 * time.Millisecond,
+	})
+
+	if len(m.pendingShellOutput) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(m.pendingShellOutput))
+	}
+	// 存储的 entry 格式为 "$ cmd\noutput"，长度应 ≤ maxShellContextLen + 头部开销
+	entry := m.pendingShellOutput[0]
+	// 输出部分不超过 maxShellContextLen
+	cmdHeader := "$ cat bigfile\n"
+	outputPart := strings.TrimPrefix(entry, cmdHeader)
+	if len(outputPart) > maxShellContextLen {
+		t.Errorf("stored output part len=%d, should be ≤ maxShellContextLen=%d", len(outputPart), maxShellContextLen)
+	}
+}
+
+func TestTruncateUTF8_ASCII(t *testing.T) {
+	s := "hello world"
+	got := truncateUTF8(s, 5)
+	if got != "hello" {
+		t.Errorf("got %q, want %q", got, "hello")
+	}
+}
+
+func TestTruncateUTF8_NoTruncation(t *testing.T) {
+	s := "hi"
+	got := truncateUTF8(s, 100)
+	if got != s {
+		t.Errorf("got %q, want %q", got, s)
+	}
+}
+
+func TestTruncateUTF8_MultibyteBoundary(t *testing.T) {
+	// "你好" = 6 bytes in UTF-8 (3 bytes each)
+	s := "你好"
+	// 截断到 4 bytes：落在 "好" 的中间（第 1 个续字节），应退回到 "你" 结束处（3 bytes）
+	got := truncateUTF8(s, 4)
+	if got != "你" {
+		t.Errorf("should back off to valid UTF-8 boundary, got %q (len=%d)", got, len(got))
+	}
+	// 确认结果是合法 UTF-8
+	for i, r := range got {
+		if r == '�' {
+			t.Errorf("invalid UTF-8 at position %d", i)
+		}
+	}
+}
+
+func TestTruncateUTF8_ExactBoundary(t *testing.T) {
+	// "你" = 3 bytes，截断到 3 bytes，应原样返回
+	got := truncateUTF8("你好", 3)
+	if got != "你" {
+		t.Errorf("got %q, want %q", got, "你")
+	}
+}
+
+func TestDispatch_InjectsPendingShellOutput(t *testing.T) {
+	m := newTestModel()
+	m.pendingShellOutput = []string{"$ git status\nOn branch main\n"}
+
+	// dispatch 应将 pendingShellOutput 前置到 prompt 并清空缓冲
+	m, _ = m.dispatch("请分析上面的输出")
+
+	if len(m.pendingShellOutput) != 0 {
+		t.Error("pendingShellOutput should be cleared after dispatch")
+	}
+}
+
+func TestDispatch_ClearsPendingShellOutputAfterInject(t *testing.T) {
+	m := newTestModel()
+	m.pendingShellOutput = []string{"$ ls\nfoo bar\n", "$ pwd\n/home/user\n"}
+
+	m, _ = m.dispatch("继续")
+
+	if len(m.pendingShellOutput) != 0 {
+		t.Errorf("pendingShellOutput should be empty after dispatch, got %d entries", len(m.pendingShellOutput))
+	}
+}
+
+func TestIsInteractiveCmd(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want bool
+	}{
+		{"vim file.go", true},
+		{"vi /etc/hosts", true},
+		{"ssh user@host", true},
+		{"top", true},
+		{"echo hello", false},
+		{"git status", false},
+		{"go test ./...", false},
+		{"", false},
+		{"/usr/bin/vim", true}, // 绝对路径也能检测
+	}
+	for _, tc := range cases {
+		got := isInteractiveCmd(tc.cmd)
+		if got != tc.want {
+			t.Errorf("isInteractiveCmd(%q) = %v, want %v", tc.cmd, got, tc.want)
+		}
+	}
+}
+
+// --- Shell 模式 UI 视觉状态测试 ---
+
+// triggerShellModeDetection 通过一次 KeyRight 消息（不修改输入内容）触发
+// Update 末尾的 textinput 更新路径，从而激活 shellMode 检测逻辑。
+// KeyRight 未在 switch msg.Type 中处理，会自动 fall-through 到 m.input.Update。
+func triggerShellModeDetection(m tuiModel) tuiModel {
+	return applyUpdate(m, tea.KeyMsg{Type: tea.KeyRight})
+}
+
+func TestShellMode_ActivatedByTextInputValue(t *testing.T) {
+	m := newTestModel()
+	if m.shellMode {
+		t.Error("initial shellMode should be false")
+	}
+
+	m.input.SetValue("!echo hi")
+	m = triggerShellModeDetection(m)
+
+	if !m.shellMode {
+		t.Error("shellMode should be true when input starts with '!'")
+	}
+	if m.input.Placeholder != `Shell 命令... "git status"` {
+		t.Errorf("placeholder should change in shell mode, got %q", m.input.Placeholder)
+	}
+}
+
+func TestShellMode_DeactivatesWhenExclamationRemoved(t *testing.T) {
+	m := newTestModel()
+	m.input.SetValue("!ls")
+	m = triggerShellModeDetection(m)
+	if !m.shellMode {
+		t.Fatal("setup: shellMode should be true")
+	}
+
+	m.input.SetValue("ls") // 移除 "!" 前缀
+	m = triggerShellModeDetection(m)
+
+	if m.shellMode {
+		t.Error("shellMode should be false when input no longer starts with '!'")
+	}
+	if m.input.Placeholder != "输入任务..." {
+		t.Errorf("placeholder should reset, got %q", m.input.Placeholder)
+	}
+}
+
+func TestShellMode_EscKeyExitsShellMode(t *testing.T) {
+	m := newTestModel()
+	m.shellMode = true
+	m.input.SetValue("!vim")
+
+	m = applyUpdate(m, tea.KeyMsg{Type: tea.KeyEsc})
+
+	if m.shellMode {
+		t.Error("Esc should exit shell mode")
+	}
+	if m.input.Value() != "" {
+		t.Errorf("Esc should clear input, got %q", m.input.Value())
+	}
+	if m.input.Placeholder != "输入任务..." {
+		t.Errorf("Esc should reset placeholder, got %q", m.input.Placeholder)
+	}
+}
+
+func TestShellMode_EnterResetsShellMode(t *testing.T) {
+	m := newTestModel()
+	m.input.SetValue("!echo test")
+	m = triggerShellModeDetection(m)
+	if !m.shellMode {
+		t.Fatal("setup: shellMode should be true")
+	}
+
+	m = applyUpdate(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.shellMode {
+		t.Error("shellMode should be reset to false after Enter")
+	}
+}
+
+func TestRenderInput_ShowsShellBadgeInShellMode(t *testing.T) {
+	m := newTestModel()
+	m.phase = phaseChat
+	m.width = 80
+	m.height = 24
+
+	// 普通模式 — 无 SHELL 徽章
+	normal := m.renderInput()
+	if strings.Contains(normal, "SHELL") {
+		t.Error("normal mode should not show SHELL badge")
+	}
+
+	// Shell 模式 — 有 SHELL 徽章
+	m.shellMode = true
+	shell := m.renderInput()
+	if !strings.Contains(shell, "SHELL") {
+		t.Error("shell mode should show SHELL badge in renderInput")
+	}
+	if strings.Contains(shell, "›") {
+		t.Error("shell mode prompt should use $ not ›")
+	}
+}
+
+func TestRenderFooter_ShowsShellHintsInShellMode(t *testing.T) {
+	m := newTestModel()
+	m.width = 80
+	m.shellMode = false
+
+	normal := m.renderFooter()
+	if strings.Contains(normal, "取消") && strings.Contains(normal, "执行") {
+		// shell-specific hints should not be in normal footer
+		t.Error("normal footer should not show shell-specific hints")
+	}
+
+	m.shellMode = true
+	shellFooter := m.renderFooter()
+	if !strings.Contains(shellFooter, "执行") {
+		t.Error("shell mode footer should contain '执行'")
+	}
+	if !strings.Contains(shellFooter, "取消") {
+		t.Error("shell mode footer should contain '取消'")
+	}
+	if !strings.Contains(shellFooter, "LLM") {
+		t.Error("shell mode footer should mention LLM context injection")
+	}
+}
+
 // TestFlushPendingThinking_UpdatesPendingReplyStart 验证 flushPendingThinking 后
 // pendingReplyStart 被更新到 thinking 结束行之后，后续 action 文本从正确位置写入。
 func TestFlushPendingThinking_UpdatesPendingReplyStart(t *testing.T) {

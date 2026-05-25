@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -41,6 +43,14 @@ const execContinuePrompt = "继续处理 todo 清单中下一个 pending 或 in_
 	"确认产出后标记为 completed，再处理下一项。" +
 	"不要只更新状态而不做实际操作，不要输出进度摘要。"
 
+const (
+	// maxShellDisplayLen 是 Shell 输出在 TUI 中展示的字节上限。
+	maxShellDisplayLen = 4096
+	// maxShellContextLen 是单条 Shell 输出存入 pendingShellOutput 并注入 LLM 上下文的字节上限。
+	// 截断在存储时执行，避免大输出长期占用内存。
+	maxShellContextLen = 2048
+)
+
 // builtinCmds 是 TUI 内置的斜杠命令列表（不含 /），用于 Tab 补全和提示。
 var builtinCmds = []struct {
 	name string
@@ -54,6 +64,14 @@ var builtinCmds = []struct {
 
 // eventMsg 将 engine.Event 包装为 tea.Msg，供 Bubbletea 的 Update 分发。
 type eventMsg engine.Event
+
+// shellResultMsg 携带用户侧 "!" 命令异步执行的结果，由 runShellCmd 产生。
+type shellResultMsg struct {
+	cmd    string
+	output string
+	isErr  bool
+	dur    time.Duration
+}
 
 // readNextEvent 返回一个 tea.Cmd，该 Cmd 阻塞直到 ch 中有一个 Event，
 // 然后以 eventMsg 形式递交给 Update。ch 关闭时递交 EventDone。
@@ -112,6 +130,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch msg.Type {
+		case tea.KeyEsc:
+			// Shell 模式下按 Esc：清空输入并退出 Shell 模式，恢复普通状态
+			if m.shellMode && !m.running {
+				m.shellMode = false
+				m.input.SetValue("")
+				m.input.Placeholder = "输入任务..."
+				return m, textinput.Blink
+			}
 		case tea.KeyCtrlC, tea.KeyCtrlD:
 			if m.running {
 				m.autoExecuting = false
@@ -157,6 +183,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.phase = phaseChat
 			m.input.Reset()
+			m.shellMode = false
+			m.input.Placeholder = "输入任务..."
 			// 清除补全状态
 			m.typedPrefix = ""
 			m.completions = nil
@@ -165,6 +193,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// /exit 静默退出，不追加用户消息行
 			if raw == "/exit" {
 				return m, tea.Quit
+			}
+
+			// Shell 模式: "!" 前缀直接执行 Bash 命令，绕过 LLM
+			// 不显示 "▶ You:" 行，改为 "$ cmd" 风格
+			if strings.HasPrefix(raw, "!") {
+				shellCmd := strings.TrimSpace(strings.TrimPrefix(raw, "!"))
+				return m.dispatchShellCommand(shellCmd)
 			}
 
 			// 显示用户消息
@@ -226,6 +261,28 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
+
+	case shellResultMsg:
+		// 展示侧：UTF-8 安全截断至 maxShellDisplayLen
+		displayOutput := msg.output
+		if len(displayOutput) > maxShellDisplayLen {
+			displayOutput = truncateUTF8(displayOutput, maxShellDisplayLen) +
+				"\n...[输出过长，已截断，建议用 head -n N 重新执行]..."
+		}
+		for _, line := range splitLines(displayOutput) {
+			m.lines = append(m.lines, shellOutputStyle.Render(line))
+		}
+		if msg.isErr {
+			m.lines = append(m.lines, shellErrStyle.Render(fmt.Sprintf("  ✗ 非零退出 — %s", msg.dur)))
+		} else {
+			m.lines = append(m.lines, shellOKStyle.Render(fmt.Sprintf("  ✓ 完成 — %s", msg.dur)))
+		}
+		// 存储侧：截断至 maxShellContextLen，避免大输出长期占用内存
+		storedOutput := truncateUTF8(msg.output, maxShellContextLen)
+		m.pendingShellOutput = append(m.pendingShellOutput,
+			fmt.Sprintf("$ %s\n%s", msg.cmd, storedOutput))
+		m.input.Focus()
+		return m, textinput.Blink
 	}
 
 	if !m.running {
@@ -235,6 +292,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if _, isKey := msg.(tea.KeyMsg); isKey {
 			m.typedPrefix = ""
 			m.completions = nil
+		}
+		// 检测 Shell 模式：输入以 "!" 开头时切换视觉状态
+		val := m.input.Value()
+		nowShell := strings.HasPrefix(val, "!")
+		if nowShell != m.shellMode {
+			m.shellMode = nowShell
+			if m.shellMode {
+				m.input.Placeholder = `Shell 命令... "git status"`
+			} else {
+				m.input.Placeholder = "输入任务..."
+			}
 		}
 		m.completionHint = m.buildCompletionHint()
 		return m, cmd
@@ -768,6 +836,21 @@ func (m tuiModel) dispatch(prompt string) (tuiModel, tea.Cmd) {
 	if m.running {
 		return m, nil
 	}
+	// 将缓冲的 Shell 命令输出前置注入 LLM 上下文。
+	// entry 已在存储时截断至 maxShellContextLen，此处直接拼接即可；
+	// 保留 truncateUTF8 作防御性兜底，防止未来代码路径绕过存储截断。
+	if len(m.pendingShellOutput) > 0 {
+		var sb strings.Builder
+		sb.WriteString("[用户执行的 Shell 命令记录]\n")
+		for i, entry := range m.pendingShellOutput {
+			if i > 0 {
+				sb.WriteString("\n---\n")
+			}
+			sb.WriteString(truncateUTF8(entry, maxShellContextLen))
+		}
+		prompt = sb.String() + "\n\n" + prompt
+		m.pendingShellOutput = nil
+	}
 	m.lines = append(m.lines, assistantStyle.Render("◆ harness9:"), "")
 	m.pendingReplyStart = len(m.lines) - 1
 	m.pendingReply = ""
@@ -940,6 +1023,76 @@ func (m tuiModel) confirmPlanReview(cursor int) (tea.Model, tea.Cmd) {
 		m.input.Focus()
 		return m, textinput.Blink
 	}
+}
+
+// truncateUTF8 按字节截断 s 到 maxBytes 以内，同时保证不在多字节 UTF-8 字符中间截断。
+// 使用 utf8.DecodeLastRuneInString 从末尾反向检测，逐字节剥离无效序列，直到末尾为完整 rune。
+func truncateUTF8(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	s = s[:maxBytes]
+	for len(s) > 0 {
+		r, size := utf8.DecodeLastRuneInString(s)
+		if r != utf8.RuneError || size > 1 {
+			break
+		}
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+// interactiveCmds 是需要 PTY 的交互式程序集合，无法在 Bubbletea AltScreen TUI 内运行。
+// "!" Shell 模式遇到这些命令时拒绝执行并提示用户在独立终端运行。
+var interactiveCmds = map[string]bool{
+	"vim": true, "vi": true, "nano": true, "emacs": true,
+	"ssh": true, "top": true, "htop": true, "less": true,
+	"man": true, "more": true, "watch": true, "tmux": true,
+	"screen": true,
+}
+
+// isInteractiveCmd 检查命令行的首个 token 是否为已知交互式程序。
+func isInteractiveCmd(cmd string) bool {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return false
+	}
+	return interactiveCmds[filepath.Base(fields[0])]
+}
+
+// runShellCmd 返回异步执行 Shell 命令的 tea.Cmd，结果以 shellResultMsg 回传。
+// 工作目录设为 workDir；命令通过 bash -c 执行；默认超时 30s。
+func runShellCmd(workDir, cmd string) tea.Cmd {
+	return func() tea.Msg {
+		start := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		c := exec.CommandContext(ctx, "bash", "-c", cmd)
+		c.Dir = workDir
+		out, err := c.CombinedOutput()
+		return shellResultMsg{
+			cmd:    cmd,
+			output: string(out),
+			isErr:  err != nil,
+			dur:    time.Since(start).Round(time.Millisecond),
+		}
+	}
+}
+
+// dispatchShellCommand 处理用户侧 "!<cmd>" Shell 命令执行：
+// 拒绝已知交互式命令（vim/ssh 等），其余命令异步执行并 inline 展示输出。
+func (m tuiModel) dispatchShellCommand(cmd string) (tuiModel, tea.Cmd) {
+	if cmd == "" {
+		m.input.Focus()
+		return m, textinput.Blink
+	}
+	m.lines = append(m.lines, shellCmdStyle.Render("$ "+cmd))
+	if isInteractiveCmd(cmd) {
+		m.lines = append(m.lines, shellErrStyle.Render("  ✗ 该命令需要交互式终端，请在独立终端窗口中运行"))
+		m.input.Focus()
+		return m, textinput.Blink
+	}
+	return m, runShellCmd(m.workDir, cmd)
 }
 
 // updateTodoBlock 在对话流末尾追加最新 todo 快照。
