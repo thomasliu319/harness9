@@ -6,8 +6,11 @@ package schema
 type StreamChunkType string
 
 const (
-	// StreamChunkTextDelta 文本增量（token-by-token），引擎层映射为 EventThinkingDelta 或 EventActionDelta。
+	// StreamChunkTextDelta 文本增量（token-by-token），引擎层映射为 EventActionDelta。
 	StreamChunkTextDelta StreamChunkType = "text_delta"
+
+	// StreamChunkThinkingDelta 推理增量（token-by-token），引擎层映射为 EventThinkingDelta。
+	StreamChunkThinkingDelta StreamChunkType = "thinking_delta"
 
 	// StreamChunkDone 流式响应结束，Message 字段携带完整的响应 Message（含 ToolCalls）。
 	StreamChunkDone StreamChunkType = "done"
@@ -18,9 +21,10 @@ const (
 
 // StreamChunk 是 LLM 流式响应的单个增量单元。
 //
-//	Type == text_delta → Delta 有效
-//	Type == done       → Message、Usage 有效
-//	Type == error      → Error 有效
+//	Type == text_delta     → Delta 有效（正文增量）
+//	Type == thinking_delta → Delta 有效（推理增量）
+//	Type == done           → Message、Usage 有效
+//	Type == error          → Error 有效
 type StreamChunk struct {
 	Type    StreamChunkType `json:"type"`
 	Delta   string          `json:"delta,omitempty"`
