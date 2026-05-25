@@ -344,3 +344,36 @@ func TestRunStream_ThinkingDelta_DataIsString(t *testing.T) {
 	}
 	t.Fatal("no EventThinkingDelta found")
 }
+
+// TestRunStream_ThinkingDelta_PrecedesActionDelta 验证 EventThinkingDelta
+// 总在 EventActionDelta 之前到达（流中推理先于正文产生）。
+func TestRunStream_ThinkingDelta_PrecedesActionDelta(t *testing.T) {
+	p := &thinkingProvider{}
+	r := &staticRegistry{output: "ok"}
+	eng := NewAgentEngine(p, r, "/test")
+
+	stream, err := eng.RunStream(context.Background(), "think")
+	if err != nil {
+		t.Fatalf("RunStream error: %v", err)
+	}
+
+	events := collectEvents(stream)
+	thinkIdx, actionIdx := -1, -1
+	for i, evt := range events {
+		if evt.Type == EventThinkingDelta && thinkIdx == -1 {
+			thinkIdx = i
+		}
+		if evt.Type == EventActionDelta && actionIdx == -1 {
+			actionIdx = i
+		}
+	}
+	if thinkIdx == -1 {
+		t.Fatal("expected at least one EventThinkingDelta")
+	}
+	if actionIdx == -1 {
+		t.Fatal("expected at least one EventActionDelta")
+	}
+	if thinkIdx > actionIdx {
+		t.Errorf("EventThinkingDelta (idx=%d) should precede EventActionDelta (idx=%d)", thinkIdx, actionIdx)
+	}
+}

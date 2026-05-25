@@ -53,6 +53,9 @@ func WithThinkingBudget(budget int64) AnthropicOption {
 	}
 }
 
+// NewAnthropicProvider 创建并返回 AnthropicProvider 实例。
+// 从环境变量读取 ANTHROPIC_API_KEY 和 ANTHROPIC_BASE_URL 完成认证配置；
+// maxTokens <= 0 时自动设为 4096（Anthropic API 要求必须指定此参数）。
 func NewAnthropicProvider(model string, maxTokens int64, opts ...AnthropicOption) (*AnthropicProvider, error) {
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	if apiKey == "" {
@@ -346,6 +349,9 @@ func (p *AnthropicProvider) extractMessage(content []anthropic.ContentBlockUnion
 	return resultMsg
 }
 
+// extractSchemaFields 从 JSON Schema map 中提取 properties 和 required 字段。
+// 同时兼容 []string 和 []interface{} 两种 required 数组类型，
+// 后者在 JSON 反序列化为 interface{} 时常见。
 func extractSchemaFields(input interface{}) (map[string]any, []string, error) {
 	m, ok := input.(map[string]interface{})
 	if !ok {

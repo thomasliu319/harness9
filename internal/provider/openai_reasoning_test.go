@@ -76,3 +76,13 @@ func TestExtractReasoningContent_InvalidJSON(t *testing.T) {
 		t.Errorf("expected empty string for invalid JSON, got %q", got)
 	}
 }
+
+// TestExtractReasoningContent_PriorityReasoningContent 验证当两个字段同时存在时，
+// reasoning_content 优先于 reasoning 返回（DeepSeek-R1 原生格式优先）。
+func TestExtractReasoningContent_PriorityReasoningContent(t *testing.T) {
+	raw := `{"choices":[{"delta":{"reasoning_content":"primary","reasoning":"fallback"}}]}`
+	got := extractReasoningContent(raw)
+	if got != "primary" {
+		t.Errorf("reasoning_content should take priority over reasoning, got %q", got)
+	}
+}

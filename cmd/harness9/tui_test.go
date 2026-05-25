@@ -542,3 +542,107 @@ func TestRenderThinkingLines_WrapsAtWidth(t *testing.T) {
 		t.Errorf("expected wrapping into multiple lines at width=40, got %d line(s): %v", len(lines), lines)
 	}
 }
+
+// TestEventError_ResetsThinkingBlock 验证 EventError 在 thinking 块活跃时，
+// 正确截断 lines（移除从 thinkingLineStart 起的所有行）并重置 thinkingLineStart。
+func TestEventError_ResetsThinkingBlock(t *testing.T) {
+	m := newTestModel()
+	m.running = true
+	m.cancelFn = func() {}
+
+	// 先触发 thinking 块
+	m = applyUpdate(m, eventMsg{Type: engine.EventThinkingDelta, Data: "deep reason"})
+	if m.thinkingLineStart == -1 {
+		t.Fatal("setup: thinkingLineStart should be set after thinking delta")
+	}
+	linesWithThinking := len(m.lines)
+
+	// 再触发错误
+	m = applyUpdate(m, eventMsg{Type: engine.EventError, Data: "network error"})
+
+	if m.thinkingLineStart != -1 {
+		t.Error("EventError should reset thinkingLineStart to -1")
+	}
+	if m.pendingThinking != "" {
+		t.Errorf("pendingThinking should be empty after EventError, got %q", m.pendingThinking)
+	}
+	// lines 应该已截断（移除了 thinking 块的所有行，并追加了错误行）
+	if len(m.lines) >= linesWithThinking {
+		t.Errorf("EventError should truncate thinking lines; linesWithThinking=%d, after=%d",
+			linesWithThinking, len(m.lines))
+	}
+	if !strings.Contains(m.lines[len(m.lines)-1], "network error") {
+		t.Errorf("last line should contain error message, got %q", m.lines[len(m.lines)-1])
+	}
+}
+
+// TestEventThinkingDelta_NoBlankLineBeforeHeader 验证 thinking 块头部（« thinking »）
+// 直接追加在 "◆ harness9:" 之后，不出现孤立的空行占位符。
+func TestEventThinkingDelta_NoBlankLineBeforeHeader(t *testing.T) {
+	m := newTestModel()
+	// 模拟 dispatch 的初始状态：尾部有一个空行占位符，pendingReplyStart 指向它
+	m.lines = []string{"◆ harness9:", ""}
+	m.pendingReplyStart = 1 // 指向空行占位符
+	m.thinkingLineStart = -1
+	m.running = true
+
+	m = applyUpdate(m, eventMsg{Type: engine.EventThinkingDelta, Data: "first thought"})
+
+	// 检查 lines 中不存在连续的空行（""）紧跟 thinking 内容
+	for i, line := range m.lines {
+		if line == "" && i+1 < len(m.lines) && strings.Contains(m.lines[i+1], "thinking") {
+			t.Errorf("blank line at index %d precedes thinking header at index %d", i, i+1)
+		}
+	}
+	// thinking 标题行必须存在
+	var hasHeader bool
+	for _, line := range m.lines {
+		if strings.Contains(line, "thinking") {
+			hasHeader = true
+			break
+		}
+	}
+	if !hasHeader {
+		t.Error("thinking header should be present after first EventThinkingDelta")
+	}
+}
+
+// TestThinkingWordWrap_FirstWordExceedsWidth 验证首词超长（如 URL）时被正确 hard-break。
+func TestThinkingWordWrap_FirstWordExceedsWidth(t *testing.T) {
+	url := "https://pkg.go.dev/github.com/charmbracelet/bubbletea#Model"
+	lines := thinkingWordWrap(url, 20)
+	for _, line := range lines {
+		if len([]rune(line)) > 20 {
+			t.Errorf("line exceeds width 20: %q (%d runes)", line, len([]rune(line)))
+		}
+	}
+	if len(lines) < 2 {
+		t.Errorf("long URL should be split into multiple lines, got %v", lines)
+	}
+}
+
+// TestFlushPendingThinking_UpdatesPendingReplyStart 验证 flushPendingThinking 后
+// pendingReplyStart 被更新到 thinking 结束行之后，后续 action 文本从正确位置写入。
+func TestFlushPendingThinking_UpdatesPendingReplyStart(t *testing.T) {
+	m := newTestModel()
+	m.running = true
+
+	// 模拟有 thinking 块的状态
+	m = applyUpdate(m, eventMsg{Type: engine.EventThinkingDelta, Data: "reason"})
+	linesBeforeFlush := len(m.lines)
+	if linesBeforeFlush == 0 {
+		t.Fatal("setup: lines should not be empty after thinking delta")
+	}
+
+	// 发 action delta，触发 flushPendingThinking + 追加文本
+	m = applyUpdate(m, eventMsg{Type: engine.EventActionDelta, Data: "answer"})
+
+	// pendingReplyStart 应在结束行之后（至少 linesBeforeFlush+1，含结束分隔线）
+	if m.pendingReplyStart <= linesBeforeFlush {
+		t.Errorf("pendingReplyStart=%d should be > %d (lines before flush) after thinking flush",
+			m.pendingReplyStart, linesBeforeFlush)
+	}
+	if m.pendingReply != "answer" {
+		t.Errorf("pendingReply = %q, want %q", m.pendingReply, "answer")
+	}
+}

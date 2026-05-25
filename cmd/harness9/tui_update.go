@@ -248,7 +248,12 @@ func (m tuiModel) handleEvent(evt engine.Event) (tea.Model, tea.Cmd) {
 	case engine.EventThinkingDelta:
 		delta, _ := evt.Data.(string)
 		if m.thinkingLineStart == -1 {
-			// 首个 thinking delta：追加标题行并记录起始位置
+			// 首个 thinking delta：追加标题行并记录起始位置。
+			// 若 pendingReplyStart 指向末尾的空行占位符（由 dispatch 插入），
+			// 先将其移除，避免 thinking 块头部出现无意义的空行。
+			if m.pendingReplyStart < len(m.lines) && m.lines[m.pendingReplyStart] == "" {
+				m.lines = m.lines[:m.pendingReplyStart]
+			}
 			m.lines = append(m.lines, thinkingHeaderStyle.Render("« thinking »"))
 			m.thinkingLineStart = len(m.lines) - 1
 		}

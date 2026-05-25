@@ -11,10 +11,10 @@ TUI 按职责拆分为四个文件：
 ```
 cmd/harness9/
 ├── tui.go          # tuiModel struct、包级样式变量、Init、RunTUI
-├── tui_update.go   # Update 逻辑：事件处理、键盘、滚动、Tab 补全、Markdown 渲染
+├── tui_update.go   # Update 逻辑：事件处理、键盘、滚动、Tab 补全、Markdown 渲染、Thinking 块
 ├── tui_view.go     # View 渲染：6 个子渲染器（Conversation/ToolProgress/StatusBar/Input/Footer）
 ├── tui_banner.go   # WelcomeBanner：HARNESS9 ASCII Art + bannerContent()
-└── tui_test.go     # 45 个单元测试：直接注入 tea.Msg 验证 model 状态
+└── tui_test.go     # 单元测试：直接注入 tea.Msg 验证 model 状态（含 thinking block 测试）
 ```
 
 ---
@@ -151,11 +151,97 @@ func readNextEvent(ch <-chan engine.Event) tea.Cmd {
 
 | engine.Event | TUI 行为 | 样式 |
 |---|---|---|
-| `EventActionDelta` | delta 追加到 `pendingReply`，原始文本写入 scrollback | 普通文字 |
-| `EventToolStart` | flush 渲染当前文本块；记录工具名、起始时间、工具参数；启动 spinner | 黄色工具进度行 |
+| `EventThinkingDelta` | delta 追加到 `pendingThinking`，以 `│` 前缀渲染为暗色推理块 | 深灰 Color "238" |
+| `EventActionDelta` | 若有 thinking 块则先 flush；delta 追加到 `pendingReply`，原始文本写入 scrollback | 普通文字 |
+| `EventToolStart` | flush thinking 块（若有）；flush 渲染当前文本块；记录工具名、起始时间、工具参数；启动 spinner | 黄色工具进度行 |
 | `EventToolResult` | 追加完成行（工具名 + 耗时）；清空 `currentTool` | 绿色 `✓` / 红色 `✗` |
-| `EventDone` | flush 渲染最终文本块；`running=false`；重新激活输入框 | 粗体绿色 `✅ 任务完成` |
-| `EventError` | 丢弃未渲染原始文本；`running=false`；追加红色错误行 | 红色 `❌` |
+| `EventDone` | flush thinking 块（若有）；flush 渲染最终文本块；`running=false`；重新激活输入框 | 粗体绿色 `✅ 任务完成` |
+| `EventError` | 丢弃未渲染原始文本及 thinking 块；`running=false`；追加红色错误行 | 红色 `❌` |
+
+---
+
+## Thinking 块展示（推理内容显示）
+
+当 LLM 支持 extended thinking（如 Anthropic Claude 的 `thinking_delta` 或 OpenRouter 的 `delta.reasoning`）时，引擎发出 `EventThinkingDelta` 事件，TUI 将推理内容渲染为视觉上明显弱于正文的深灰色块，与 LLM 回复正文形成层次区分。
+
+### 渲染效果
+
+```
+◆ harness9:
+« thinking »
+  │ 我需要先分析用户的需求，再决定用哪个工具来实现...
+  │ read_file 可以先探索目录结构，然后 bash 运行测试确认
+  │ 当前的 go.sum 是否完整...
+  └ ──────────────────────────────
+好的，我来帮你完成这个任务...
+```
+
+### 状态机设计
+
+Thinking 块使用三个字段维护状态：
+
+```go
+pendingThinking   string  // 累积当前轮次的推理文本
+thinkingLineStart int     // « thinking » 标题行在 lines 中的索引；-1 表示未激活
+```
+
+状态转换：
+
+```
+dispatch() 调用
+    → thinkingLineStart = -1, pendingThinking = ""
+         ↓
+EventThinkingDelta (首次)
+    → 移除 pendingReplyStart 处的空行占位符（避免 header 前出现空白行）
+    → 追加 "« thinking »" 到 lines
+    → thinkingLineStart = len(lines) - 1
+         ↓
+EventThinkingDelta (后续)
+    → pendingThinking += delta
+    → lines[thinkingLineStart+1:] 全量覆写（renderThinkingLines）
+         ↓
+EventActionDelta / EventToolStart / EventDone
+    → flushPendingThinking()：追加 "  └ ───" 结束线
+    → thinkingLineStart = -1, pendingThinking = ""
+    → pendingReplyStart = len(lines)  ← 后续正文从此处写入
+```
+
+### flushPendingThinking — 关键约束
+
+`flushPendingThinking` 仅在 `pendingThinking != ""` 时执行（空 thinking 直接返回），确保幂等。调用点：
+
+| 触发事件 | flush 时机 |
+|---|---|
+| `EventActionDelta` | 在 `pendingReply += delta` 之前，保证 `pendingReplyStart` 已更新 |
+| `EventToolStart` | 在 `flushPendingReply()` 之前，避免行索引错乱 |
+| `EventDone` | 在 `flushPendingReply()` 之前 |
+| `EventError` | 不调用 flush，直接截断 lines 到 `thinkingLineStart` |
+
+### renderThinkingLines — 渲染算法
+
+```go
+func renderThinkingLines(text string, width int) []string
+```
+
+- 按 `\n` 切分段落，每段通过 `thinkingWordWrap` 折行
+- 每行添加 `"  │ "` 前缀（4 个显示列），终端宽度 < 24 时禁用折行
+- 返回 ANSI 染色后的行切片，直接覆写 `lines[thinkingLineStart+1:]`
+
+### thinkingWordWrap — 折行算法
+
+- 按词边界折行，保证每行 ≤ `width` rune
+- 超长单词（URL 等）通过 `hardBreak` 强制截断，防止溢出终端宽度
+- 首词无需特殊处理：最终检查 `if len([]rune(line)) > width` 统一兜底
+
+### 样式常量
+
+```go
+thinkingHeaderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Italic(true)  // « thinking »
+thinkingLineStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))               // │ 内容行
+thinkingEndStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("236"))               // └ 结束线
+```
+
+深灰色（Color "238"/"236"）使推理内容视觉上明显弱于正文，用户一眼可区分推理过程和最终回复。
 
 ---
 
@@ -319,12 +405,13 @@ enter 发送  / 技能命令  ↑↓ 滚动  end 回底部 (42%)  ctrl+c 退出
 
 ### 内置命令
 
-TUI 内置三条斜杠命令，优先于 Skills 处理：
+TUI 内置四条斜杠命令，优先于 Skills 处理：
 
 | 命令 | 行为 |
 |------|------|
 | `/new` | 新建会话，替换引擎绑定，状态栏刷新 |
 | `/resume` | 列出历史会话，进入序号选择模式 |
+| `/plan [任务描述]` | 进入 Plan Mode；带任务描述时直接发送规划请求，不带时提示输入 |
 | `/exit` | 退出 TUI（等同于空闲时按 Ctrl-C） |
 
 ```go
@@ -334,6 +421,7 @@ var builtinCmds = []struct {
 }{
     {"new", "开启新会话"},
     {"resume", "恢复历史会话"},
+    {"plan", "进入规划模式分析任务"},
     {"exit", "退出 TUI"},
 }
 ```
@@ -404,6 +492,9 @@ signal.NotifyContext(SIGINT/SIGTERM)  ← outerCtx（main.go）
 | `cyanStyle` | Color "81" | 快捷键高亮 |
 | `brandStyle` | Color "226"，Bold | harness9 品牌名 |
 | `sepStyle` | Color "237" | 分隔线 |
+| `thinkingHeaderStyle` | Color "238"，Italic | Thinking 块标题（« thinking »） |
+| `thinkingLineStyle` | Color "238" | Thinking 块内容行（│ 前缀） |
+| `thinkingEndStyle` | Color "236" | Thinking 块结束线（└ 分隔线） |
 
 ---
 

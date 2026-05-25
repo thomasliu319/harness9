@@ -47,6 +47,10 @@ func WithIncludeReasoning() OpenAIOption {
 	}
 }
 
+// NewOpenAIProvider 创建并返回 OpenAIProvider 实例。
+// 从环境变量读取 OPENAI_API_KEY 和 OPENAI_BASE_URL 完成认证配置。
+// 当 OPENAI_BASE_URL 中包含 "openrouter" 时自动启用 includeReasoning，
+// 使 OpenRouter 在流式响应中暴露推理内容（delta.reasoning 字段）。
 func NewOpenAIProvider(model string, opts ...OpenAIOption) (*OpenAIProvider, error) {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
@@ -320,6 +324,9 @@ func (p *OpenAIProvider) extractMessage(choice openai.ChatCompletionMessage) *sc
 	return resultMsg
 }
 
+// convertToFunctionParameters 将 JSON Schema interface{} 转换为 OpenAI SDK 的 FunctionParameters 类型。
+// 优先路径：若 input 已是 map[string]interface{}，直接类型断言（无内存分配）。
+// 回退路径：先 Marshal 再 Unmarshal，适用于其他实现了 JSON 序列化的 Schema 类型。
 func convertToFunctionParameters(input interface{}) (shared.FunctionParameters, error) {
 	if m, ok := input.(map[string]interface{}); ok {
 		return shared.FunctionParameters(m), nil
