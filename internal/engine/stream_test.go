@@ -276,3 +276,70 @@ func TestRunStream_ToolResultDataIsToolResult(t *testing.T) {
 	}
 	t.Fatal("expected EventToolResult event")
 }
+
+// thinkingProvider 是一个在流式响应中同时发送 thinking_delta 和 text_delta 的测试桩。
+type thinkingProvider struct{}
+
+func (p *thinkingProvider) Generate(_ context.Context, _ []schema.Message, _ []schema.ToolDefinition) (*schema.Message, *schema.Usage, error) {
+	return &schema.Message{Role: schema.RoleAssistant, Content: "result"}, nil, nil
+}
+
+func (p *thinkingProvider) GenerateStream(_ context.Context, _ []schema.Message, _ []schema.ToolDefinition) (<-chan schema.StreamChunk, error) {
+	ch := make(chan schema.StreamChunk, 3)
+	go func() {
+		defer close(ch)
+		ch <- schema.StreamChunk{Type: schema.StreamChunkThinkingDelta, Delta: "reasoning step"}
+		ch <- schema.StreamChunk{Type: schema.StreamChunkTextDelta, Delta: "result"}
+		msg := &schema.Message{Role: schema.RoleAssistant, Content: "result"}
+		ch <- schema.StreamChunk{Type: schema.StreamChunkDone, Message: msg}
+	}()
+	return ch, nil
+}
+
+func TestRunStream_ThinkingDelta_EmitsEventThinkingDelta(t *testing.T) {
+	p := &thinkingProvider{}
+	r := &staticRegistry{output: "ok"}
+	eng := NewAgentEngine(p, r, "/test")
+
+	stream, err := eng.RunStream(context.Background(), "think")
+	if err != nil {
+		t.Fatalf("RunStream error: %v", err)
+	}
+
+	counts := map[EventType]int{}
+	for _, evt := range collectEvents(stream) {
+		counts[evt.Type]++
+	}
+
+	if counts[EventThinkingDelta] == 0 {
+		t.Errorf("expected at least one EventThinkingDelta, got counts=%v", counts)
+	}
+	if counts[EventActionDelta] == 0 {
+		t.Errorf("expected at least one EventActionDelta, got counts=%v", counts)
+	}
+}
+
+func TestRunStream_ThinkingDelta_DataIsString(t *testing.T) {
+	p := &thinkingProvider{}
+	r := &staticRegistry{output: "ok"}
+	eng := NewAgentEngine(p, r, "/test")
+
+	stream, err := eng.RunStream(context.Background(), "think")
+	if err != nil {
+		t.Fatalf("RunStream error: %v", err)
+	}
+
+	for _, evt := range collectEvents(stream) {
+		if evt.Type == EventThinkingDelta {
+			s, ok := evt.Data.(string)
+			if !ok {
+				t.Fatalf("EventThinkingDelta.Data should be string, got %T", evt.Data)
+			}
+			if s != "reasoning step" {
+				t.Errorf("expected %q, got %q", "reasoning step", s)
+			}
+			return
+		}
+	}
+	t.Fatal("no EventThinkingDelta found")
+}

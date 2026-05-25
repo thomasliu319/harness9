@@ -23,6 +23,9 @@ const (
 	// EventActionDelta 表示 Action 阶段的文本增量（逐 token）。Data 类型为 string。
 	EventActionDelta EventType = "action_delta"
 
+	// EventThinkingDelta 表示推理阶段的文本增量（逐 token）。Data 类型为 string。
+	EventThinkingDelta EventType = "thinking_delta"
+
 	// EventToolStart 表示引擎开始执行一个工具调用。Data 类型为 schema.ToolCall。
 	EventToolStart EventType = "tool_start"
 
@@ -63,9 +66,10 @@ type Event struct {
 	Type EventType `json:"type"`
 	Turn int       `json:"turn,omitempty"`
 	// Data 事件载荷，类型随 Type 变化：
-	//   EventActionDelta → string, EventToolStart → schema.ToolCall,
-	//   EventToolResult → ToolResultData, EventDone → nil, EventError → string,
-	//   EventTokenUpdate → TokenUpdateData, EventCompaction → CompactionData
+	//   EventActionDelta  → string, EventThinkingDelta → string,
+	//   EventToolStart    → schema.ToolCall,
+	//   EventToolResult   → ToolResultData, EventDone → nil, EventError → string,
+	//   EventTokenUpdate  → TokenUpdateData, EventCompaction → CompactionData
 	Data any `json:"data,omitempty"`
 }
 
@@ -164,6 +168,10 @@ func (e *AgentEngine) streamGenerate(ctx context.Context, ch chan<- Event, turn 
 		switch chunk.Type {
 		case schema.StreamChunkTextDelta:
 			if !sendEvent(ctx, ch, Event{Type: EventActionDelta, Turn: turn, Data: chunk.Delta}) {
+				return nil, nil, ctx.Err()
+			}
+		case schema.StreamChunkThinkingDelta:
+			if !sendEvent(ctx, ch, Event{Type: EventThinkingDelta, Turn: turn, Data: chunk.Delta}) {
 				return nil, nil, ctx.Err()
 			}
 		case schema.StreamChunkDone:
