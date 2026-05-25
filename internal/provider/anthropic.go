@@ -178,6 +178,8 @@ func (p *AnthropicProvider) GenerateStream(ctx context.Context, msgs []schema.Me
 				switch cb.ContentBlock.Type {
 				case "tool_use":
 					toolAccs.start(int(cb.Index), cb.ContentBlock.ID, cb.ContentBlock.Name)
+				case "thinking", "redacted_thinking":
+					// thinking 内容通过后续 thinking_delta 事件增量到达，此处无需初始化。
 				}
 
 			case "content_block_delta":
