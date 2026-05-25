@@ -5,9 +5,6 @@ export default defineConfig({
   description: '轻量级、功能完备、生产可用的 Go Agent Harness 框架',
   base: '/harness9/',
   appearance: 'dark',
-  head: [
-    ['link', { rel: 'icon', href: '/harness9/favicon.ico' }],
-  ],
   themeConfig: {
     nav: [
       { text: '首页', link: '/' },

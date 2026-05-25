@@ -5,6 +5,9 @@ hero:
   name: "harness9"
   text: "轻量级 Go Agent Harness 框架"
   tagline: 功能完备、生产可用。极简抽象，代码直白。
+  image:
+    src: ''
+    alt: 'harness9 terminal demo'
   actions:
     - theme: brand
       text: 快速开始 →
@@ -25,13 +28,22 @@ features:
     details: 错误恢复、上下文管理、超时控制、并发工具执行、Path Traversal 防护，不只是 demo。
   - icon: 💻
     title: 全屏 TUI
-    details: 流式输出、Spinner 进度、Token 用量实时展示、Tab 补全、Shell 执行（! 前缀）。
+    details: 流式输出、Spinner 进度、Token 用量实时展示、Tab 补全。AltScreen 全屏渲染，非 TTY 自动退回 CLI。
+  - icon: ⚡
+    title: Shell 执行
+    details: 输入框 ! 前缀直接运行 Bash 命令，输出追加到对话流并自动注入 LLM 上下文，无需切换终端。
   - icon: 🧠
     title: Context Engineering
     details: LLM 摘要压缩、SQLite 会话持久化、80% 阈值自动触发，长对话不丢语义。
   - icon: 📋
     title: Planning 模块
     details: Plan Mode 先规划后执行，TodoStore 状态机校验，工具层权限过滤，自动续跑 + 停滞检测。
+  - icon: 🔀
+    title: 并发工具执行
+    details: 同 Turn 内多工具并发执行，每工具独立超时控制。执行失败时错误原样回传 LLM，触发自动重试。
+  - icon: 💡
+    title: 推理内容展示
+    details: Anthropic extended thinking 和 OpenRouter reasoning_content 均路由为 EventThinkingDelta，TUI 流式渲染深灰色思维块。
 ---
 
 ## 架构总览
