@@ -1,0 +1,27 @@
+/* 覆盖 VitePress 品牌色为绿色，匹配 harness9 TUI 终端风格 */
+:root {
+  --vp-c-brand-1: #4ade80;
+  --vp-c-brand-2: #22c55e;
+  --vp-c-brand-3: #16a34a;
+  --vp-c-brand-soft: rgba(74, 222, 128, 0.1);
+}
+
+/* 深色背景使用 GitHub Dark 配色 */
+.dark {
+  --vp-c-bg: #0d1117;
+  --vp-c-bg-soft: #161b22;
+  --vp-c-bg-mute: #21262d;
+  --vp-c-border: #30363d;
+  --vp-c-divider: #21262d;
+}
+
+/* Hero 区域：收窄高度，让 TerminalDemo 更突出 */
+.VPHero {
+  padding-top: 48px !important;
+  padding-bottom: 48px !important;
+}
+
+/* 代码块使用深色背景 */
+.dark .vp-code-group .tabs {
+  background-color: #161b22;
+}
