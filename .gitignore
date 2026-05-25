@@ -24,3 +24,8 @@ reports/
 
 # 本地临时目录
 tmp/
+
+# VitePress 网站依赖与构建产物
+website/node_modules/
+website/.vitepress/dist/
+website/.vitepress/cache/
