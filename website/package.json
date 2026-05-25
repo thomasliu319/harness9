@@ -1,6 +1,7 @@
 {
   "name": "harness9-website",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "vitepress dev",
     "build": "vitepress build",
