@@ -44,10 +44,15 @@ const execContinuePrompt = "继续处理 todo 清单中下一个 pending 或 in_
 	"不要只更新状态而不做实际操作，不要输出进度摘要。"
 
 const (
-	// maxShellDisplayLen 是 Shell 输出在 TUI 中展示的字节上限。
+	// maxShellDisplayLen 是 Shell 命令输出在 TUI Scrollback 中展示的字节上限。
+	// 超出部分添加截断提示行，建议用户缩小输出范围后重新执行。
+	// 设为 4096 与 read_file 工具的 maxReadLen 保持一致，避免用户认知负担。
 	maxShellDisplayLen = 4096
-	// maxShellContextLen 是单条 Shell 输出存入 pendingShellOutput 并注入 LLM 上下文的字节上限。
-	// 截断在存储时执行，避免大输出长期占用内存。
+
+	// maxShellContextLen 是单条 Shell 命令输出存入 pendingShellOutput（并最终注入 LLM 上下文）的字节上限。
+	// 截断在 shellResultMsg 处理时的存储侧执行，而非展示侧，
+	// 确保大输出不会以完整形式长期驻留内存，也不会使 LLM 上下文过度膨胀。
+	// 设为 2048 以留出足够上下文空间容纳多条命令记录。
 	maxShellContextLen = 2048
 )
 
@@ -65,7 +70,14 @@ var builtinCmds = []struct {
 // eventMsg 将 engine.Event 包装为 tea.Msg，供 Bubbletea 的 Update 分发。
 type eventMsg engine.Event
 
-// shellResultMsg 携带用户侧 "!" 命令异步执行的结果，由 runShellCmd 产生。
+// shellResultMsg 携带用户侧 "!" 命令异步执行的结果，由 runShellCmd 产生后经 Bubbletea 消息队列
+// 分发给 Update() 的 case shellResultMsg 分支处理。
+//
+// 字段说明：
+//   - cmd：原始命令字符串（不含前缀 "!"），用于在 dispatch() 构建 LLM 上下文记录
+//   - output：stdout + stderr 合并输出（exec.CombinedOutput），未截断的原始内容
+//   - isErr：命令退出码非零时为 true（包括超时被终止的情况）
+//   - dur：从 runShellCmd 启动到 CombinedOutput 返回的实际耗时，精确到毫秒
 type shellResultMsg struct {
 	cmd    string
 	output string
@@ -263,7 +275,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case shellResultMsg:
-		// 展示侧：UTF-8 安全截断至 maxShellDisplayLen
+		// 展示侧（Scrollback）：UTF-8 安全截断至 maxShellDisplayLen，超出时追加截断提示。
+		// 逐行渲染（splitLines），空输出不追加任何行。
 		displayOutput := msg.output
 		if len(displayOutput) > maxShellDisplayLen {
 			displayOutput = truncateUTF8(displayOutput, maxShellDisplayLen) +
@@ -272,12 +285,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, line := range splitLines(displayOutput) {
 			m.lines = append(m.lines, shellOutputStyle.Render(line))
 		}
+		// 结束状态行：展示退出码结果和实际耗时
 		if msg.isErr {
 			m.lines = append(m.lines, shellErrStyle.Render(fmt.Sprintf("  ✗ 非零退出 — %s", msg.dur)))
 		} else {
 			m.lines = append(m.lines, shellOKStyle.Render(fmt.Sprintf("  ✓ 完成 — %s", msg.dur)))
 		}
-		// 存储侧：截断至 maxShellContextLen，避免大输出长期占用内存
+		// 存储侧（LLM 上下文）：截断至 maxShellContextLen，防止大输出长期驻留内存。
+		// dispatch() 会将所有 pendingShellOutput 记录拼接后前置注入下次 LLM 请求的 prompt。
 		storedOutput := truncateUTF8(msg.output, maxShellContextLen)
 		m.pendingShellOutput = append(m.pendingShellOutput,
 			fmt.Sprintf("$ %s\n%s", msg.cmd, storedOutput))
@@ -836,9 +851,19 @@ func (m tuiModel) dispatch(prompt string) (tuiModel, tea.Cmd) {
 	if m.running {
 		return m, nil
 	}
-	// 将缓冲的 Shell 命令输出前置注入 LLM 上下文。
-	// entry 已在存储时截断至 maxShellContextLen，此处直接拼接即可；
-	// 保留 truncateUTF8 作防御性兜底，防止未来代码路径绕过存储截断。
+	// 将缓冲的 Shell 命令输出前置注入 LLM 上下文，格式为：
+	//   [用户执行的 Shell 命令记录]
+	//   $ git status
+	//   On branch main...
+	//   ---
+	//   $ go build ./...
+	//   ...
+	//
+	//   <用户的实际 prompt>
+	//
+	// entry 已在 shellResultMsg 处理时截断至 maxShellContextLen，
+	// 此处保留 truncateUTF8 作防御性兜底，防止未来代码路径绕过存储侧截断。
+	// 注入后立即清空，避免同一批命令被下一次 dispatch 重复注入。
 	if len(m.pendingShellOutput) > 0 {
 		var sb strings.Builder
 		sb.WriteString("[用户执行的 Shell 命令记录]\n")
@@ -1026,7 +1051,13 @@ func (m tuiModel) confirmPlanReview(cursor int) (tea.Model, tea.Cmd) {
 }
 
 // truncateUTF8 按字节截断 s 到 maxBytes 以内，同时保证不在多字节 UTF-8 字符中间截断。
-// 使用 utf8.DecodeLastRuneInString 从末尾反向检测，逐字节剥离无效序列，直到末尾为完整 rune。
+//
+// 实现策略：先强制截断到 maxBytes 字节，再从末尾反向逐字节扫描：
+//   - utf8.DecodeLastRuneInString 返回 (RuneError, 1) 表示末尾字节是不完整序列的一部分 → 剥离
+//   - 返回有效 rune 或 (RuneError, size>1)（即合法的 U+FFFD）→ 停止剥离
+//
+// 这比 strings.ToValidUTF8 或 utf8.ValidString 的逐字节扫描更高效：
+// 多字节 UTF-8 最多 4 字节，最多剥离 3 次即可找到完整末尾。
 func truncateUTF8(s string, maxBytes int) string {
 	if len(s) <= maxBytes {
 		return s
@@ -1042,8 +1073,15 @@ func truncateUTF8(s string, maxBytes int) string {
 	return s
 }
 
-// interactiveCmds 是需要 PTY 的交互式程序集合，无法在 Bubbletea AltScreen TUI 内运行。
-// "!" Shell 模式遇到这些命令时拒绝执行并提示用户在独立终端运行。
+// interactiveCmds 是需要 PTY（伪终端）的交互式程序白名单。
+//
+// Bubbletea 以 AltScreen 模式独占终端输入输出，这类程序无法在其内部正常运行：
+//   - 编辑器（vim/nano/emacs）：需要全屏 raw 模式操控终端
+//   - 分页器（less/more/man）：需要逐页控制字符
+//   - 监控工具（top/htop/watch）：需要持续重绘整个屏幕
+//   - 远程/复用工具（ssh/tmux/screen）：需要建立自己的 PTY 会话
+//
+// 命中时输出错误提示，引导用户在独立终端窗口运行。
 var interactiveCmds = map[string]bool{
 	"vim": true, "vi": true, "nano": true, "emacs": true,
 	"ssh": true, "top": true, "htop": true, "less": true,
@@ -1052,6 +1090,8 @@ var interactiveCmds = map[string]bool{
 }
 
 // isInteractiveCmd 检查命令行的首个 token 是否为已知交互式程序。
+// 对绝对路径命令（如 /usr/bin/vim）使用 filepath.Base 提取文件名后再匹配，
+// 防止因路径前缀导致的漏判。
 func isInteractiveCmd(cmd string) bool {
 	fields := strings.Fields(cmd)
 	if len(fields) == 0 {
@@ -1060,8 +1100,16 @@ func isInteractiveCmd(cmd string) bool {
 	return interactiveCmds[filepath.Base(fields[0])]
 }
 
-// runShellCmd 返回异步执行 Shell 命令的 tea.Cmd，结果以 shellResultMsg 回传。
-// 工作目录设为 workDir；命令通过 bash -c 执行；默认超时 30s。
+// runShellCmd 返回异步执行 Shell 命令的 tea.Cmd。
+//
+// Bubbletea 运行时会在独立 goroutine 中调用此函数返回的闭包，不阻塞主消息循环。
+// 执行结果以 shellResultMsg 形式发回主消息队列，由 Update() 处理。
+//
+// 实现细节：
+//   - 通过 bash -c 执行，支持管道、重定向、&&/|| 等复杂 Shell 语法
+//   - 固定超时 30s：与 BashTool.bashHardTimeout 保持一致，防止长时间阻塞 TUI
+//   - CombinedOutput 合并 stdout 和 stderr，确保错误信息对用户可见
+//   - err != nil 同时覆盖非零退出码和命令超时被终止两种情况（统一为 isErr=true）
 func runShellCmd(workDir, cmd string) tea.Cmd {
 	return func() tea.Msg {
 		start := time.Now()
@@ -1079,13 +1127,22 @@ func runShellCmd(workDir, cmd string) tea.Cmd {
 	}
 }
 
-// dispatchShellCommand 处理用户侧 "!<cmd>" Shell 命令执行：
-// 拒绝已知交互式命令（vim/ssh 等），其余命令异步执行并 inline 展示输出。
+// dispatchShellCommand 处理用户侧 "!<cmd>" Shell 命令执行。
+//
+// 执行流程：
+//  1. 空命令直接返回（重新聚焦输入框）
+//  2. 追加 "$ cmd" 行到 Scrollback（先于执行结果显示，提供即时反馈）
+//  3. isInteractiveCmd 检测：命中则追加错误提示，不执行
+//  4. 非交互式命令：返回 runShellCmd tea.Cmd，由 Bubbletea 异步执行
+//
+// 注意：此函数不设置 m.running = true，Shell 命令与 LLM 推理是独立的并行路径，
+// 二者都不会阻塞 TUI 主循环。
 func (m tuiModel) dispatchShellCommand(cmd string) (tuiModel, tea.Cmd) {
 	if cmd == "" {
 		m.input.Focus()
 		return m, textinput.Blink
 	}
+	// 先行追加命令行显示，使用户即时看到命令已提交（即使执行尚未完成）
 	m.lines = append(m.lines, shellCmdStyle.Render("$ "+cmd))
 	if isInteractiveCmd(cmd) {
 		m.lines = append(m.lines, shellErrStyle.Render("  ✗ 该命令需要交互式终端，请在独立终端窗口中运行"))

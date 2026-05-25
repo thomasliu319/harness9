@@ -86,10 +86,19 @@ Footer：正常快捷键               Footer：enter 执行 / esc 取消 / ctrl
 | `shellOKStyle` | `✓ 完成` 行，绿色（#34） |
 | `shellErrStyle` | `✗ 非零退出` 行，红色（#160） |
 
-颜色切换逻辑集中在 `accentStyle()` 和 `activeStatusBarStyle()` 两个方法中，优先级：
+颜色切换逻辑集中在 `tui_view.go` 的两个方法中，View 层无散落的 if 判断：
+
+```go
+func (m tuiModel) accentStyle() lipgloss.Style         // 返回当前模式的强调色
+func (m tuiModel) activeStatusBarStyle() lipgloss.Style // 返回当前模式的状态栏容器样式
+```
+
+优先级（高→低）：
 
 ```
-shellMode → Plan Mode → Default
+shellMode=true  →  深绿底 #22 + 亮绿 accent #83
+Plan/AutoEdit   →  深橙底 #94 + 琥珀黄 accent #220
+Default         →  深灰底 #235 + 青色 accent #81
 ```
 
 ---
@@ -221,21 +230,21 @@ var interactiveCmds = map[string]bool{
 
 | 内容 | 文件 | 位置 |
 |------|------|------|
-| 样式变量定义 | `cmd/harness9/tui.go` | `var (...)` 块 |
+| Shell 样式变量（`shellCmdStyle` 等） | `cmd/harness9/tui.go` | `var (...)` 块，Shell 模式样式分组 |
 | `shellMode` / `pendingShellOutput` 字段 | `cmd/harness9/tui.go` | `tuiModel` struct |
 | 常量 `maxShellDisplayLen` / `maxShellContextLen` | `cmd/harness9/tui_update.go` | `const (...)` 块 |
-| `shellResultMsg` 类型 | `cmd/harness9/tui_update.go` | 约第 69 行 |
+| `shellResultMsg` 类型 | `cmd/harness9/tui_update.go` | `shellResultMsg` struct 定义处 |
 | Esc 退出 Shell 模式 | `cmd/harness9/tui_update.go` | `case tea.KeyEsc:` |
-| Enter 分发 Shell 命令 | `cmd/harness9/tui_update.go` | `case tea.KeyEnter:` |
-| `case shellResultMsg:` 结果处理 | `cmd/harness9/tui_update.go` | 约第 265 行 |
-| Shell 模式实时检测 | `cmd/harness9/tui_update.go` | textinput fallthrough 区块 |
-| `dispatch()` 上下文注入 | `cmd/harness9/tui_update.go` | `dispatch` 函数 |
-| `truncateUTF8` | `cmd/harness9/tui_update.go` | 约第 1030 行 |
-| `interactiveCmds` / `isInteractiveCmd` | `cmd/harness9/tui_update.go` | 约第 1047 行 |
-| `runShellCmd` | `cmd/harness9/tui_update.go` | 约第 1065 行 |
-| `dispatchShellCommand` | `cmd/harness9/tui_update.go` | 约第 1084 行 |
-| `accentStyle()` / `activeStatusBarStyle()` | `cmd/harness9/tui_view.go` | 约第 22、36 行 |
-| `renderStatusBar()` SHELL 标签 | `cmd/harness9/tui_view.go` | `renderStatusBar` |
-| `renderInput()` Shell 模式 | `cmd/harness9/tui_view.go` | `renderInput` |
-| `renderFooter()` Shell 模式 | `cmd/harness9/tui_view.go` | `renderFooter` |
+| Enter 分发 Shell 命令 | `cmd/harness9/tui_update.go` | `case tea.KeyEnter:`，`strings.HasPrefix(raw, "!")` 分支 |
+| `case shellResultMsg:` 结果处理 | `cmd/harness9/tui_update.go` | `Update()` 中 `case shellResultMsg:` |
+| Shell 模式实时检测 | `cmd/harness9/tui_update.go` | `Update()` 末尾 textinput fallthrough 区块 |
+| `dispatch()` 上下文注入 | `cmd/harness9/tui_update.go` | `dispatch()` 函数 `pendingShellOutput` 处理块 |
+| `truncateUTF8` | `cmd/harness9/tui_update.go` | `truncateUTF8` 函数 |
+| `interactiveCmds` / `isInteractiveCmd` | `cmd/harness9/tui_update.go` | `interactiveCmds` var + `isInteractiveCmd` 函数 |
+| `runShellCmd` | `cmd/harness9/tui_update.go` | `runShellCmd` 函数 |
+| `dispatchShellCommand` | `cmd/harness9/tui_update.go` | `dispatchShellCommand` 函数 |
+| `accentStyle()` / `activeStatusBarStyle()` | `cmd/harness9/tui_view.go` | 文件开头两个方法 |
+| `renderStatusBar()` SHELL 标签 | `cmd/harness9/tui_view.go` | `renderStatusBar`，`modePart` 赋值分支 |
+| `renderInput()` Shell 模式 | `cmd/harness9/tui_view.go` | `renderInput` 首 `if m.shellMode` 分支 |
+| `renderFooter()` Shell 模式 | `cmd/harness9/tui_view.go` | `renderFooter` 首 `if m.shellMode` 分支 |
 | 单元测试 | `cmd/harness9/tui_test.go` | `TestShell*`、`TestTruncateUTF8*` |

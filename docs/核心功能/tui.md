@@ -365,11 +365,14 @@ glamour.NewTermRenderer(
 
 | 按键 | idle 状态 | Agent 运行中 |
 |------|-----------|-------------|
-| `Enter` | 发送输入，启动 Agent（首次触发 phaseWelcome→phaseChat）；输入 `/exit` 时退出 TUI | 忽略 |
+| `Enter` | 发送输入，启动 Agent（首次触发 phaseWelcome→phaseChat）；`!cmd` 时执行 Shell 命令；输入 `/exit` 时退出 TUI | 忽略 |
+| `!`（首字符） | 实时切换 Shell 模式（状态栏/输入区视觉变化，无需 Enter） | 忽略 |
+| `Esc` | Shell 模式时：清空输入框，退出 Shell 模式 | 忽略 |
 | `Tab` | 内置命令 + Skills 补全循环（内置命令优先） | 忽略 |
-| `Ctrl-C` / `Ctrl-D` | 退出 TUI | 调用 `cancelFn()` 中断 Agent |
-| 鼠标滚轮上 / `PgUp` / `↑` | 向上滚动 | 同左 |
-| 鼠标滚轮下 / `PgDn` / `↓` | 向下滚动，到底回到 auto-scroll | 同左 |
+| `Shift-Tab` | 循环切换 Plan Mode（Default → Plan → AutoEdit → Default） | 忽略 |
+| `Ctrl-C` / `Ctrl-D` | 退出 TUI | 调用 `cancelFn()` 中断 Agent；清除 autoExecuting |
+| 鼠标滚轮上 / `PgUp` / `Ctrl-↑` | 向上滚动 | 同左 |
+| 鼠标滚轮下 / `PgDn` / `Ctrl-↓` | 向下滚动，到底回到 auto-scroll | 同左 |
 | `End` | 强制跳回底部（auto-scroll） | — |
 
 ### 滚动实现
@@ -457,6 +460,26 @@ Footer 实时展示匹配提示；内置命令附带括号描述，Skills 仅显
 
 ---
 
+## Shell 执行模式（`!` 前缀）
+
+输入框以 `!` 开头时，TUI 进入 Shell 模式：状态栏切换为深绿底，输入区显示 `[SHELL] $` 徽章，footer 展示专属快捷键提示。按 `Enter` 通过 `dispatchShellCommand` 异步执行命令，命令输出追加到 Scrollback，并缓存到 `pendingShellOutput`，供下次 `dispatch()` 前置注入 LLM 上下文。
+
+相关类型和函数位于 `tui_update.go`：
+
+| 符号 | 作用 |
+|------|------|
+| `shellResultMsg` | 携带命令执行结果（cmd / output / isErr / dur）的 Bubbletea Msg |
+| `dispatchShellCommand` | 拦截交互式命令、追加 "$ cmd" 行、返回 `runShellCmd` tea.Cmd |
+| `runShellCmd` | 返回异步执行 bash -c 的 tea.Cmd（30s 超时） |
+| `truncateUTF8` | 字节安全截断，保证不破坏多字节 UTF-8 字符边界 |
+| `isInteractiveCmd` | 检测首 token 是否为已知 PTY 依赖程序 |
+| `maxShellDisplayLen` | TUI 展示侧截断上限（4096 字节） |
+| `maxShellContextLen` | LLM 上下文存储侧截断上限（2048 字节） |
+
+详细实现见 [Shell 执行功能技术方案](shell-execution.md)。
+
+---
+
 ## Context 传播
 
 ```
@@ -482,19 +505,52 @@ signal.NotifyContext(SIGINT/SIGTERM)  ← outerCtx（main.go）
 | `assistantStyle` | Color "10"，Bold | Agent 回复标签 |
 | `dimStyle` | Color "240" | 灰色辅助文字 |
 | `errorStyle` | Color "9" | 错误消息 |
-| `statusBarStyle` | Bg "235" / Fg "11" | StatusBar 背景 |
+| `statusBarStyle` | Bg "235" / Fg "11" | Default 模式 StatusBar 背景 |
 | `toolRunStyle` | Color "11" | 工具名（运行中，黄色） |
 | `verbRunStyle` | Color "226" | Spinner + 动词（亮黄色） |
 | `toolOKStyle` | Color "10" | 工具成功（绿色） |
 | `toolErrStyle` | Color "9" | 工具失败（红色） |
 | `doneStyle` | Color "10"，Bold | 任务完成（粗体绿色） |
 | `skillStyle` | Color "14" | 技能激活（青色） |
-| `cyanStyle` | Color "81" | 快捷键高亮 |
+| `cyanStyle` | Color "81" | Default 模式 accent 文字 |
 | `brandStyle` | Color "226"，Bold | harness9 品牌名 |
 | `sepStyle` | Color "237" | 分隔线 |
+| `planAccentStyle` | Color "220" | Plan Mode accent 文字（琥珀黄） |
+| `planStatusBarStyle` | Bg "94" / Fg "220" | Plan Mode StatusBar 背景 |
+| `planModeLabelStyle` | Color "208"，Bold | 状态栏 `[PLAN]` 标签 |
 | `thinkingHeaderStyle` | Color "238"，Italic | Thinking 块标题（« thinking »） |
 | `thinkingLineStyle` | Color "238" | Thinking 块内容行（│ 前缀） |
 | `thinkingEndStyle` | Color "236" | Thinking 块结束线（└ 分隔线） |
+| `shellCmdStyle` | Color "33"，Bold | Shell 模式：命令行 `$ cmd` |
+| `shellOutputStyle` | Color "250" | Shell 模式：输出行（浅灰） |
+| `shellOKStyle` | Color "34" | Shell 模式：`✓ 完成` |
+| `shellErrStyle` | Color "160" | Shell 模式：`✗ 非零退出` |
+| `shellStatusBarStyle` | Bg "22" / Fg "120" | Shell 模式 StatusBar 背景（深绿） |
+| `shellModeTagStyle` | Bg "58" / Fg "226"，Bold | 输入区 `[SHELL]` 徽章 |
+| `shellModeAccentStyle` | Color "83" | Shell 模式 accent 文字（亮绿） |
+| `shellModePromptStyle` | Color "83"，Bold | 输入区 `$ ` 提示符 |
+| `shellModeLabelInBarStyle` | Color "83"，Bold | 状态栏 `SHELL` 标签 |
+
+---
+
+## 模式颜色优先级
+
+三种模式通过状态栏背景色明确区分。颜色切换逻辑集中于 `tui_view.go` 中的两个方法：
+
+```go
+func (m tuiModel) accentStyle() lipgloss.Style      // 强调色（链接、session ID、快捷键）
+func (m tuiModel) activeStatusBarStyle() lipgloss.Style  // 状态栏背景
+```
+
+优先级（高→低）：Shell 模式 > Plan 模式 > Default 模式。
+
+```
+shellMode=true  →  深绿底 #22 + 亮绿 accent #83
+Plan/AutoEdit   →  深橙底 #94 + 琥珀黄 accent #220
+Default         →  深灰底 #235 + 青色 accent #81
+```
+
+`renderStatusBar`、`renderFooter`、`renderTodoLines` 统一调用这两个方法，View 层无散落的 if 判断。
 
 ---
 

@@ -163,6 +163,7 @@ func downloadFile(url, dest string) error {
 	}
 	defer resp.Body.Close()
 
+	// 先检查 HTTP 状态码，避免创建空文件后再报错导致磁盘残留。
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %s", resp.Status)
 	}

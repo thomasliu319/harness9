@@ -240,11 +240,12 @@ for evt := range stream {
 harness9/
 ├── cmd/harness9/
 │   ├── main.go              # 程序入口：TUI（TTY）/ CLI（管道）自动检测
-│   ├── tui.go               # TUI 核心：tuiModel、Init、RunTUI
-│   ├── tui_update.go        # Update 逻辑：事件、键盘、滚动、Tab 补全
+│   ├── tui.go               # TUI 核心：tuiModel、Init、RunTUI、包级样式变量
+│   ├── tui_update.go        # Update 逻辑：事件、键盘、滚动、Tab 补全、Shell 执行
 │   ├── tui_view.go          # View 渲染：对话区 / StatusBar / Input / Footer
 │   ├── tui_banner.go        # WelcomeBanner：HARNESS9 ASCII Art
-│   └── cli.go               # 交互式 CLI REPL 实现
+│   ├── cli.go               # 交互式 CLI REPL 实现
+│   └── upgrade.go           # 自动升级：GitHub Releases API + SHA256 校验 + 原子替换
 ├── internal/
 │   ├── engine/              # ReAct 主循环（Run + RunStream + ToolResultData）
 │   ├── hooks/               # 工具拦截器（OffloadHook + FilePlanWriter + HookRegistry）

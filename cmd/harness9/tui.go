@@ -74,29 +74,42 @@ var (
 	thinkingLineStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))              // │ 内容行
 	thinkingEndStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("236"))              // └ 结束线
 
-	// Shell 模式样式 — 用户侧 "!" 前缀直接执行命令
-	shellCmdStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("33")).Bold(true) // 黄色加粗：$ cmd
-	shellOutputStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))           // 浅灰：输出行
-	shellOKStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("34"))            // 绿色：✓ 完成
-	shellErrStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("160"))           // 红色：✗ 非零退出
+	// Shell 模式样式 — 对话流中 "!cmd" 输出的行级渲染样式。
+	// 与 UI 指示器样式（shellStatusBarStyle 等）分组存放，方便按区域查找：
+	//   shellCmdStyle    → "$ git status" 命令行本身（深蓝加粗，#33）
+	//   shellOutputStyle → 命令 stdout/stderr 输出内容（浅灰 #250，视觉次要）
+	//   shellOKStyle     → "✓ 完成 — 12ms" 成功结束行（绿色 #34）
+	//   shellErrStyle    → "✗ 非零退出 — 3ms" 失败结束行（红色 #160）
+	shellCmdStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("33")).Bold(true)
+	shellOutputStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	shellOKStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("34"))
+	shellErrStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("160"))
 
-	// Shell 模式激活时的 UI 指示器样式（与对话内容渲染样式分开）
-	// 状态栏背景切换为深绿色，与默认（深灰 235）和 Plan Mode（深橙 94）明确区分
+	// Shell 模式 UI 指示器样式 — 控制状态栏、徽章、提示符的视觉主题。
+	// 设计要点：三种模式（Default / Plan / Shell）通过状态栏背景色明确区分：
+	//   Default  → 深灰底 #235（statusBarStyle）
+	//   Plan     → 深橙底 #94（planStatusBarStyle）
+	//   Shell    → 深绿底 #22（shellStatusBarStyle）
+	// 颜色切换逻辑集中在 accentStyle() 和 activeStatusBarStyle() 两个方法中。
 	shellStatusBarStyle = lipgloss.NewStyle().
 				Background(lipgloss.Color("22")).
 				Foreground(lipgloss.Color("120")).
 				Padding(0, 1)
-	// 输入区 [SHELL] 徽章：深橄榄背景 + 亮黄文字，视觉上明显但不刺眼
+	// shellModeTagStyle 是输入区左侧 [SHELL] 徽章的样式。
+	// 深橄榄底（#58）+ 亮黄文字（#226）：醒目但不刺眼，与对话文本颜色层次分明。
 	shellModeTagStyle = lipgloss.NewStyle().
 				Background(lipgloss.Color("58")).
 				Foreground(lipgloss.Color("226")).
 				Bold(true).
 				Padding(0, 1)
-	// Shell 模式下状态栏内 accent 文字（亮绿色，在深绿背景上可读）
+	// shellModeAccentStyle 是 Shell 模式下状态栏和 footer 中 accent 文字的颜色（亮绿 #83）。
+	// 在深绿背景（#22）上保持足够对比度。
 	shellModeAccentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("83"))
-	// shellModePromptStyle 是 renderInput 中 "$ " 提示符的样式，预计算避免每帧 .Bold(true) 分配。
+	// shellModePromptStyle 是 renderInput 中 "$ " 提示符样式。
+	// 预计算为包级变量，避免 View() 每帧调用时重复执行 .Bold(true) 触发内存分配。
 	shellModePromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("83")).Bold(true)
-	// Shell 模式下状态栏内 SHELL 标签
+	// shellModeLabelInBarStyle 是状态栏内 "SHELL" 文本的样式（亮绿加粗），
+	// 与 planModeLabelStyle（Color "208"）并列，二者不会同时出现。
 	shellModeLabelInBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("83")).Bold(true)
 )
 
@@ -208,11 +221,15 @@ type tuiModel struct {
 	autoExecStuck int
 
 	// pendingShellOutput 缓存本轮对话中用户通过 "!" 前缀执行的 Shell 命令及其输出，
-	// 在用户下一次向 LLM 发送消息时前置注入上下文，供 LLM 引用命令结果。
+	// 在用户下一次向 LLM 发送消息时由 dispatch() 前置注入 prompt 头部，
+	// 使 LLM 可直接引用命令结果进行推理。
+	// 每条 entry 格式：  "$ cmd\noutput..."（已在存储时截断至 maxShellContextLen）。
+	// dispatch() 消费后置为 nil，避免重复注入。
 	pendingShellOutput []string
 
 	// shellMode 为 true 时表示输入框当前以 "!" 开头，处于 Shell 执行模式。
-	// View 层依此切换状态栏背景色、输入区徽章、footer 快捷键提示。
+	// 由 Update() 中的输入实时检测逻辑驱动（非 running 状态下每次按键后检测），
+	// View 层据此切换状态栏背景色（深绿）、输入区徽章（[SHELL]）、footer 提示文字。
 	shellMode bool
 }
 

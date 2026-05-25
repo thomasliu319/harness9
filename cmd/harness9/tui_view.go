@@ -12,13 +12,18 @@ import (
 	"github.com/harness9/internal/planning"
 )
 
-// accentStyle 返回当前执行模式对应的强调色样式（accent style）：
-//   - shellMode → 亮绿色（shellModeAccentStyle #83）
-//   - PlanModeDefault → 青色（cyanStyle #81）
-//   - PlanModePlan / PlanModeAutoEdit → 琥珀黄（planAccentStyle #220）
+// accentStyle 返回当前执行模式对应的强调色样式（accent style）。
 //
-// 此方法被 renderStatusBar、renderFooter、renderTodoLines 统一调用，
-// 确保颜色切换逻辑集中在单一位置，View 层无散落的 if 判断。
+// 优先级（高→低）：Shell 模式 > Plan Mode > Default。
+// Shell 模式优先级高于 Plan Mode 的原因：用户激活 Shell 模式时需要即时视觉反馈，
+// 即使当前是 Plan Mode 也应当清晰显示 Shell 模式的绿色主题。
+//
+//   - shellMode=true              → 亮绿色（shellModeAccentStyle, #83）
+//   - PlanModePlan / PlanModeAutoEdit → 琥珀黄（planAccentStyle, #220）
+//   - PlanModeDefault              → 青色（cyanStyle, #81）
+//
+// 将颜色切换逻辑集中于此一处，renderStatusBar / renderFooter / renderTodoLines
+// 统一调用，View 层无散落的 if 判断，模式颜色映射易于维护和扩展。
 func (m tuiModel) accentStyle() lipgloss.Style {
 	if m.shellMode {
 		return shellModeAccentStyle
@@ -29,10 +34,14 @@ func (m tuiModel) accentStyle() lipgloss.Style {
 	return cyanStyle
 }
 
-// activeStatusBarStyle 返回当前模式下的状态栏背景样式：
-//   - shellMode → 深绿底（shellStatusBarStyle #22），与 Plan Mode 橙底明确区分
-//   - Default → 深灰底（statusBarStyle #235）
-//   - Plan/AutoEdit → 深橙底（planStatusBarStyle #94），给用户明确的视觉信号
+// activeStatusBarStyle 返回当前模式下的状态栏容器背景样式。
+//
+// 三种背景色通过不同色调给用户强烈的视觉区分信号：
+//   - shellMode=true      → 深绿底（shellStatusBarStyle, bg #22 / fg #120）
+//   - Plan/AutoEdit 模式  → 深橙底（planStatusBarStyle,  bg #94 / fg #220）
+//   - Default 模式        → 深灰底（statusBarStyle,       bg #235 / fg #11）
+//
+// 优先级规则与 accentStyle() 保持一致。
 func (m tuiModel) activeStatusBarStyle() lipgloss.Style {
 	if m.shellMode {
 		return shellStatusBarStyle
@@ -199,6 +208,10 @@ func (m tuiModel) renderStatusBar() string {
 			sessionInfo += dimStyle.Render("  ctx: ") + tokenStr
 		}
 	}
+	// modePart 在状态栏中显示当前模式标签：
+	//   Shell 模式  → "│ SHELL"（亮绿加粗），优先于 Plan 模式标签展示
+	//   Plan/Auto   → "│ [PLAN]"（琥珀 Color "208"）
+	//   Default     → 空字符串，不占用状态栏空间
 	modeLabel := m.planMode.Label()
 	var modePart string
 	if m.shellMode {
@@ -261,10 +274,13 @@ func (m tuiModel) renderPlanReviewDialog() string {
 	return planReviewBoxStyle.Render(sb.String())
 }
 
-// renderInput 渲染输入行。
-//   - Shell 模式：显示 [SHELL] 黄色徽章 + 绿色 $ 提示符
-//   - Plan Mode：琥珀色 › 提示符
-//   - 默认：普通 › 提示符
+// renderInput 渲染底部输入行，根据当前模式切换提示符样式。
+//
+//   - Shell 模式：" [SHELL]  $ <textinput>"（深橄榄徽章 + 绿色 $ 提示符）
+//   - Plan Mode：  "  › <textinput>"（琥珀黄 › 提示符）
+//   - Default 模式："  › <textinput>"（普通灰色 › 提示符）
+//
+// Shell 模式下的徽章和 $ 提示符使用预计算的包级样式变量，避免每帧创建新样式对象。
 func (m tuiModel) renderInput() string {
 	if m.shellMode {
 		badge := shellModeTagStyle.Render("SHELL")
@@ -277,8 +293,15 @@ func (m tuiModel) renderInput() string {
 	return "  › " + m.input.View()
 }
 
-// renderFooter 渲染底部快捷键提示行。
-// 优先级：Shell 模式提示 > 补全提示 > 滚动位置提示 > 默认快捷键
+// renderFooter 渲染底部快捷键提示行，提示内容按以下优先级选取：
+//
+//  1. Shell 模式：固定展示 enter/esc/ctrl+c 及"输出自动注入"说明
+//  2. 补全提示（completionHint != ""）：Tab 补全候选列表
+//  3. 手动滚动（viewTop ≥ 0）：含百分比的滚动位置提示
+//  4. 默认：常规快捷键提示（enter / / / ↑↓ / ctrl+c）
+//
+// Shell 模式 footer 特意提示"输出自动注入 LLM 上下文"，
+// 使用户意识到命令结果会被纳入下次 LLM 请求的上下文中。
 func (m tuiModel) renderFooter() string {
 	if m.shellMode {
 		a := shellModeAccentStyle
