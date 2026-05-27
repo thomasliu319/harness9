@@ -104,6 +104,33 @@ skills/
 
 详见 [Agent Skills 设计原理](docs/核心功能/agent-skills.md)。
 
+### Human-in-the-Loop 权限控制
+
+Agent 执行工具时，内置规则引擎自动评估风险等级，只有真正需要人类判断的操作才会暂停并弹出审批对话框：
+
+```
+╭─────────────────────────────────────────────────╮
+│  ⚠  工具审批请求 [高风险]                         │
+│                                                 │
+│  工具：bash                                     │
+│  原因：强制递归删除文件/目录                      │
+│                                                 │
+│  ▶ [1] 允许（仅本次）                           │
+│    [2] 允许（本会话不再提示）                     │
+│    [3] 总是允许（写入白名单）                     │
+│    [4] 拒绝                                     │
+│    [5] 拒绝并提供反馈...                         │
+╰─────────────────────────────────────────────────╯
+```
+
+- **三级决策**：`allow`（放行）/ `deny`（拒绝）/ `ask`（弹框审批），通过洋葱模型 Hook 链依次评估
+- **内置高危拦截**：`DangerHook` 自动识别 `rm -rf`、`curl | bash`、`sudo`、`dd if=` 等 19 条高危模式
+- **JSON 白名单配置**：`.harness9/settings.json` 支持 glob 语法规则，选择「总是允许」后立即生效无需重启
+- **敏感路径硬保护**：`~/.ssh`、`~/.aws`、`~/.kube`、`~/.gnupg` 等路径无论任何配置均拒绝访问
+- **非交互兼容**：管道/CI 模式下 `ask` 决策自动视为 Allow，不破坏无人值守流程
+
+详见 [Human-in-the-Loop 权限控制](docs/核心功能/human-in-the-loop.md)。
+
 ### Planning 模块（先规划、再执行）
 
 通过 `Shift+Tab` 切换到 Plan Mode（状态栏显示 `[PLAN]`，色调切换为琥珀黄）。
@@ -221,7 +248,8 @@ for evt := range stream {
 | -------------- | --------------------------------------------------------------------------------------- | --- |
 | **TUI**        | 全屏 TUI（Bubbletea）：双 Phase、流式输出、Spinner + 精确耗时、Tab 补全、Token 用量实时展示、Shell 执行模式（`!` 前缀）| ✅   |
 | **Engine**     | 标准 ReAct 主循环，阻塞 + 流式双模式，EventTokenUpdate / EventCompaction / EventToolResult（精确耗时）事件   | ✅   |
-| **Hooks**      | 工具拦截器：OffloadHook（超大输出 offload）+ FilePlanWriter（计划持久化）+ HookRegistry（洋葱模型）               | ✅   |
+| **Hooks**      | 工具拦截器：HookRegistry（洋葱模型）+ OffloadHook（超大输出 offload）+ FilePlanWriter（计划持久化）+ DangerHook（高危命令拦截）| ✅   |
+| **Permission** | Human-in-the-Loop 权限控制：PermissionHook（JSON 规则）+ 审批对话框（5 选项）+ 白名单动态更新 + 敏感路径硬保护        | ✅   |
 | **Planning**   | Plan Mode（先规划后执行）、TodoStore、todo_write 工具、PlanWriter 接口、工具层权限过滤、自动续跑 + 停滞检测           | ✅   |
 | **Memory**     | SQLiteSession（WAL）、Manager（WithToolResultsDir + DeleteSession GC）、SummarizationCompactor（默认，LLM 摘要）、TokenBudgetCompactor（回退） | ✅   |
 | **Context**    | System Prompt 结构化组装（基础 + AGENTS.md + Skills 索引 + todo 指引 + offload 检索指引）                | ✅   |
@@ -281,6 +309,7 @@ harness9/
 | [Planning 模块实现原理](docs/核心功能/planning.md)                      | Plan Mode、TodoStore、工具层权限控制、自动续跑、停滞检测、跨会话持久化            |
 | [文件系统能力技术方案](docs/核心功能/file-system.md)                         | OffloadHook、FilePlanWriter、read_file 分页、Session GC、Hooks 扩展 |
 | [Shell 执行功能技术方案](docs/核心功能/shell-execution.md)                   | `!` 前缀触发、异步执行机制、LLM 上下文注入、截断策略、交互式命令拦截          |
+| [Human-in-the-Loop 权限控制](docs/核心功能/human-in-the-loop.md)           | HookDecision、DangerHook、PermissionHook、审批对话框、白名单配置、敏感路径保护  |
 | [AGENTS.md](AGENTS.md)                                       | 项目开发规范、编码标准、架构决策                                        |
 
 

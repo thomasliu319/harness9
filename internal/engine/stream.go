@@ -12,6 +12,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/harness9/internal/hooks"
 	"github.com/harness9/internal/logfmt"
 	"github.com/harness9/internal/schema"
 )
@@ -45,6 +46,15 @@ const (
 	// EventCompaction 在上下文发生有效压缩时发出（token 数减少 > 5%）。
 	// Data 类型为 CompactionData。
 	EventCompaction EventType = "compaction"
+
+	// EventApprovalRequired 表示工具执行需要人类审批。Data 类型为 ApprovalRequest。
+	// 引擎在工具执行前发出此事件，同时工具 goroutine 阻塞在 ApprovalRequest.ResponseCh 等待回复。
+	//
+	// 并发工具调用时，多个工具 goroutine 可能同时请求审批。由于 Event channel 是无缓冲的，
+	// 第二个审批请求会阻塞在 ch <- Event 直到 TUI 处理完第一个请求并恢复读取。
+	// TUI 实现必须在展示审批对话框期间继续消费 Event channel（不可直接 select 等待 ResponseCh），
+	// 否则多工具场景下会发生死锁。
+	EventApprovalRequired EventType = "approval_required"
 )
 
 // Event 是引擎面向客户端的流式事件单元。RunStream 返回 <-chan Event，
@@ -101,6 +111,15 @@ type CompactionData struct {
 	MsgsAfter int `json:"msgs_after"`
 }
 
+// ApprovalRequest 是 EventApprovalRequired 的事件载荷。
+// 引擎 goroutine 通过 ResponseCh 阻塞等待 TUI（或其他消费者）的审批决策。
+type ApprovalRequest struct {
+	ToolCall   schema.ToolCall
+	Reason     string
+	RiskLevel  string
+	ResponseCh chan hooks.ApprovalResponse
+}
+
 // sendEvent 向 Event channel 发送事件，同时感知 context 取消。
 // 返回 false 表示 context 已取消，调用方应立即退出。
 // 终止事件（EventDone / EventError）应使用直接 ch <- 而非本函数，以确保消费者收到。
@@ -141,6 +160,34 @@ func (e *AgentEngine) RunStream(ctx context.Context, userPrompt string) (<-chan 
 			},
 			compaction: func(data CompactionData) {
 				sendEvent(ctx, ch, Event{Type: EventCompaction, Data: data})
+			},
+			// 审批等待使用会话级 ctx（RunStream 的外层 ctx），不受工具执行超时约束。
+			// 工具超时（toolTimeout）仅应限制工具本身的计算时间，而非人类决策时间：
+			// 若用 toolCtx（含 60s 超时）等待 respCh，用户超时未响应时工具会被自动拒绝，
+			// 且 TUI 端 ResponseCh 不再被读取，导致工具 goroutine 在发送时短暂挂起。
+			// 参数 _ context.Context 为 toolCtx，此处故意忽略，使用外层 ctx。
+			approval: func(_ context.Context, tc schema.ToolCall, reason, riskLevel string) hooks.ApprovalResponse {
+				if e.permissionMode == PermissionModeBypassAll {
+					return hooks.ApprovalResponse{Approved: true}
+				}
+				respCh := make(chan hooks.ApprovalResponse, 1)
+				req := ApprovalRequest{
+					ToolCall:   tc,
+					Reason:     reason,
+					RiskLevel:  riskLevel,
+					ResponseCh: respCh,
+				}
+				select {
+				case <-ctx.Done():
+					return hooks.ApprovalResponse{Approved: false}
+				case ch <- Event{Type: EventApprovalRequired, Data: req}:
+				}
+				select {
+				case <-ctx.Done():
+					return hooks.ApprovalResponse{Approved: false}
+				case resp := <-respCh:
+					return resp
+				}
 			},
 		}
 

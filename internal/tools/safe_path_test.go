@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -40,6 +42,28 @@ func TestSafePath_AllowsInsideWorkDir(t *testing.T) {
 		}
 		if got != want {
 			t.Errorf("safePath(%q, %q) = %q, want %q", workDir, in, got, want)
+		}
+	}
+}
+
+func TestSafePath_SensitivePathBlocked(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home dir")
+	}
+	cases := []struct {
+		inputPath string
+	}{
+		{filepath.Join(home, ".ssh", "id_rsa")},
+		{filepath.Join(home, ".aws", "credentials")},
+		{filepath.Join(home, ".kube", "config")},
+		{filepath.Join(home, ".gnupg", "secring.gpg")},
+		{filepath.Join(home, ".netrc")},
+	}
+	for _, tc := range cases {
+		_, err := safePath("/tmp", tc.inputPath)
+		if err == nil {
+			t.Errorf("safePath should reject sensitive path %s", tc.inputPath)
 		}
 	}
 }

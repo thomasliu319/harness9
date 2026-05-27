@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"path/filepath"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -111,6 +112,17 @@ var (
 	// shellModeLabelInBarStyle 是状态栏内 "SHELL" 文本的样式（亮绿加粗），
 	// 与 planModeLabelStyle（Color "208"）并列，二者不会同时出现。
 	shellModeLabelInBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("83")).Bold(true)
+
+	// 审批对话框样式
+	approvalBoxStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("160")).
+				Padding(0, 2).
+				Width(60)
+	approvalTitleHighStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("160")) // 高风险：红
+	approvalTitleMedStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("208")) // 中风险：橙
+	approvalTitleLowStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220")) // 低风险：黄
+	approvalSelectedStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("160"))
 )
 
 type tuiPhase int
@@ -231,6 +243,17 @@ type tuiModel struct {
 	// 由 Update() 中的输入实时检测逻辑驱动（非 running 状态下每次按键后检测），
 	// View 层据此切换状态栏背景色（深绿）、输入区徽章（[SHELL]）、footer 提示文字。
 	shellMode bool
+
+	// 审批对话框状态：approvalPending=true 时渲染审批对话框，屏蔽普通输入
+	approvalPending   bool
+	approvalRequest   *engine.ApprovalRequest
+	approvalCursor    int
+	approvalFeedback  string
+	approvalInputting bool
+	settingsPath      string
+
+	// permMode 是引擎的全局权限策略，影响状态栏显示和审批行为。
+	permMode engine.PermissionMode
 }
 
 // pendingToolInfo 记录单个并发工具调用的启动信息，用于 EventToolResult 时精确还原名称和参数。
@@ -272,6 +295,7 @@ func newTUIModel(eng *engine.AgentEngine, idx *skills.Index, mgr *memory.Manager
 	if sess != nil {
 		m.sessionID = sess.SessionID()
 	}
+	m.settingsPath = filepath.Join(workDir, ".harness9", "settings.json")
 	return m
 }
 

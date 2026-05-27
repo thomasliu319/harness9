@@ -18,6 +18,36 @@ import (
 	"strings"
 )
 
+// hardSensitivePaths 是永远拒绝访问的敏感路径前缀，不受 workDir 白名单影响。
+// 使用绝对路径前缀匹配，防止 LLM 意外或恶意读写凭证文件。
+var hardSensitivePaths = buildSensitivePaths()
+
+func buildSensitivePaths() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// 无法确定 home dir 时返回空列表，bash DangerHook 作为备份防线。
+		return nil
+	}
+	return []string{
+		filepath.Join(home, ".ssh"),
+		filepath.Join(home, ".aws"),
+		filepath.Join(home, ".kube"),
+		filepath.Join(home, ".gnupg"),
+		filepath.Join(home, ".netrc"),
+		filepath.Join(home, ".config", "gcloud"),
+	}
+}
+
+// isSensitivePath 检查绝对路径是否落在硬编码敏感目录下。
+func isSensitivePath(absPath string) bool {
+	for _, prefix := range hardSensitivePaths {
+		if absPath == prefix || strings.HasPrefix(absPath, prefix+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	return false
+}
+
 // safePath 将用户输入的相对路径解析为绝对路径，并校验是否在工作区范围内。
 //
 // 这是防止路径遍历攻击（Path Traversal Attack）的核心安全屏障：
@@ -37,6 +67,14 @@ import (
 //	safePath("/project", "../../etc/passwd")     → "", error
 //	safePath("/project", "./README.md")          → "/project/README.md", nil
 func safePath(workDir, inputPath string) (string, error) {
+	// 敏感路径先检：对绝对路径输入，在拼接前直接校验，防止攻击者通过绝对路径绕过沙箱。
+	if filepath.IsAbs(inputPath) {
+		cleanInput := filepath.Clean(inputPath)
+		if isSensitivePath(cleanInput) {
+			return "", fmt.Errorf("路径 '%s' 是受保护的敏感路径，禁止访问", inputPath)
+		}
+	}
+
 	cleanWorkDir := filepath.Clean(workDir)
 	joined := filepath.Join(cleanWorkDir, inputPath)
 	absPath, err := filepath.Abs(joined)
@@ -49,6 +87,10 @@ func safePath(workDir, inputPath string) (string, error) {
 	// 否则 "/project-evil" 会被误判为 "/project" 的合法子路径。
 	if !strings.HasPrefix(absPath, cleanWorkDir+string(os.PathSeparator)) && absPath != cleanWorkDir {
 		return "", fmt.Errorf("路径 '%s' 超出工作区范围", inputPath)
+	}
+
+	if isSensitivePath(absPath) {
+		return "", fmt.Errorf("路径 '%s' 是受保护的敏感路径，禁止访问", inputPath)
 	}
 
 	return absPath, nil

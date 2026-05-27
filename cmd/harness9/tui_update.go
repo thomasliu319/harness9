@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -17,7 +18,9 @@ import (
 	"github.com/charmbracelet/glamour"
 
 	"github.com/harness9/internal/engine"
+	"github.com/harness9/internal/hooks"
 	"github.com/harness9/internal/memory"
+	"github.com/harness9/internal/permission"
 	"github.com/harness9/internal/planning"
 	"github.com/harness9/internal/schema"
 )
@@ -118,6 +121,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// 审批对话框（approvalPending）激活时：优先由 handleApprovalKey 处理所有键盘输入。
+		// approvalPending 在收到 EventApprovalRequired 后设为 true，此时工具 goroutine 阻塞等待响应。
+		if m.approvalPending {
+			return m.handleApprovalKey(msg)
+		}
 		// 审查对话框（planReviewing）激活时：↑↓ 移动光标，Enter 确认，Esc 取消。
 		// planReviewing 在 Plan Mode 的 EventDone 中设为 true，View() 此时渲染审查对话框而非输入框。
 		if m.planReviewing {
@@ -345,6 +353,19 @@ func (m tuiModel) handleEvent(evt engine.Event) (tea.Model, tea.Cmd) {
 		thinkingLines := renderThinkingLines(m.pendingThinking, m.width)
 		m.lines = append(m.lines[:m.thinkingLineStart+1], thinkingLines...)
 		return m, readNextEvent(m.eventCh)
+
+	case engine.EventApprovalRequired:
+		req, ok := evt.Data.(engine.ApprovalRequest)
+		if !ok {
+			return m, readNextEvent(m.eventCh)
+		}
+		m.approvalPending = true
+		m.approvalRequest = &req
+		m.approvalCursor = 0
+		m.approvalFeedback = ""
+		m.approvalInputting = false
+		// 不恢复 readNextEvent：工具 goroutine 阻塞等待 ResponseCh
+		return m, nil
 
 	case engine.EventActionDelta:
 		delta, _ := evt.Data.(string)
@@ -1164,4 +1185,153 @@ func (m tuiModel) updateTodoBlock() tuiModel {
 	}
 	m.lines = append(m.lines, todoLines...)
 	return m
+}
+
+// handleApprovalKey 处理审批对话框的键盘输入。
+func (m tuiModel) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.approvalInputting {
+		switch msg.Type {
+		case tea.KeyEnter:
+			return m.confirmApproval(4)
+		case tea.KeyEsc:
+			m.approvalInputting = false
+			m.approvalFeedback = ""
+			m.approvalCursor = 4
+			return m, nil
+		case tea.KeyBackspace, tea.KeyDelete:
+			if len(m.approvalFeedback) > 0 {
+				m.approvalFeedback = m.approvalFeedback[:len(m.approvalFeedback)-1]
+			}
+		default:
+			if msg.Runes != nil {
+				m.approvalFeedback += string(msg.Runes)
+			}
+		}
+		return m, nil
+	}
+
+	switch msg.Type {
+	case tea.KeyUp:
+		if m.approvalCursor > 0 {
+			m.approvalCursor--
+		}
+	case tea.KeyDown:
+		if m.approvalCursor < 4 {
+			m.approvalCursor++
+		}
+	case tea.KeyEnter:
+		if m.approvalCursor == 4 {
+			m.approvalInputting = true
+			m.approvalFeedback = ""
+			return m, nil
+		}
+		return m.confirmApproval(m.approvalCursor)
+	case tea.KeyEsc:
+		return m.confirmApproval(3)
+	case tea.KeyCtrlC, tea.KeyCtrlD:
+		return m.confirmApproval(3) // treat as deny
+	case tea.KeyRunes:
+		if len(msg.Runes) == 1 {
+			switch msg.Runes[0] {
+			case '1':
+				return m.confirmApproval(0)
+			case '2':
+				return m.confirmApproval(1)
+			case '3':
+				return m.confirmApproval(2)
+			case '4':
+				return m.confirmApproval(3)
+			case '5':
+				m.approvalInputting = true
+				m.approvalFeedback = ""
+				return m, nil
+			}
+		}
+	}
+	return m, nil
+}
+
+// confirmApproval 处理审批确认，cursor 0-4 对应五个选项：
+//
+//	0 = 允许（仅本次）
+//	1 = 允许（本会话不再提示）
+//	2 = 总是允许（写入白名单）
+//	3 = 拒绝
+//	4 = 拒绝并提供反馈
+func (m tuiModel) confirmApproval(cursor int) (tea.Model, tea.Cmd) {
+	if m.approvalRequest == nil {
+		m.approvalPending = false
+		return m, readNextEvent(m.eventCh)
+	}
+	req := m.approvalRequest
+	m.approvalPending = false
+	m.approvalRequest = nil
+	m.approvalCursor = 0
+	m.approvalInputting = false
+
+	var resp hooks.ApprovalResponse
+	switch cursor {
+	case 0:
+		resp = hooks.ApprovalResponse{Approved: true}
+		m.lines = append(m.lines, dimStyle.Render(
+			fmt.Sprintf("  ✓ 已允许（本次）: %s", req.ToolCall.Name),
+		))
+	case 1:
+		resp = hooks.ApprovalResponse{Approved: true}
+		m.lines = append(m.lines, dimStyle.Render(
+			fmt.Sprintf("  ✓ 已允许（会话）: %s", req.ToolCall.Name),
+		))
+	case 2:
+		resp = hooks.ApprovalResponse{Approved: true, Remember: true}
+		m.writeApprovalToConfig(req)
+		m.lines = append(m.lines, dimStyle.Render(
+			fmt.Sprintf("  ✓ 已允许（写入白名单）: %s", req.ToolCall.Name),
+		))
+	case 3:
+		resp = hooks.ApprovalResponse{Approved: false}
+		m.lines = append(m.lines, errorStyle.Render(
+			fmt.Sprintf("  ✗ 已拒绝: %s", req.ToolCall.Name),
+		))
+	case 4:
+		resp = hooks.ApprovalResponse{Approved: false, Feedback: m.approvalFeedback}
+		m.lines = append(m.lines, errorStyle.Render(
+			fmt.Sprintf("  ✗ 已拒绝: %s — %s", req.ToolCall.Name, m.approvalFeedback),
+		))
+		m.approvalFeedback = ""
+	}
+
+	req.ResponseCh <- resp
+	return m, readNextEvent(m.eventCh)
+}
+
+// writeApprovalToConfig 将审批的工具调用写入白名单配置文件（"总是允许"持久化）。
+func (m tuiModel) writeApprovalToConfig(req *engine.ApprovalRequest) {
+	if m.settingsPath == "" {
+		return
+	}
+	rules, err := permission.LoadRules(m.settingsPath)
+	if err != nil {
+		return
+	}
+	var pattern string
+	if req.ToolCall.Name == "bash" {
+		var args struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal(req.ToolCall.Arguments, &args); err == nil && args.Command != "" {
+			// 取命令的第一个单词作为关键词
+			fields := strings.Fields(args.Command)
+			if len(fields) > 0 {
+				pattern = fmt.Sprintf("bash(*%s*)", fields[0])
+			}
+		}
+	}
+	if pattern == "" {
+		pattern = req.ToolCall.Name
+	}
+	rules.AddRule(permission.RuleAllow, []string{pattern})
+	if err := os.MkdirAll(filepath.Dir(m.settingsPath), 0700); err != nil {
+		return
+	}
+	_ = permission.SaveRules(m.settingsPath, rules)
 }

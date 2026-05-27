@@ -60,8 +60,8 @@ func NewOffloadHook(workDir, sessionID string, opts ...OffloadOption) *OffloadHo
 }
 
 // BeforeExecute 对 OffloadHook 是空操作。
-func (h *OffloadHook) BeforeExecute(ctx context.Context, tc schema.ToolCall) (context.Context, error) {
-	return ctx, nil
+func (h *OffloadHook) BeforeExecute(ctx context.Context, tc schema.ToolCall) (context.Context, HookDecision, error) {
+	return ctx, Allow(), nil
 }
 
 // AfterExecute 检测输出大小，超阈值时写入文件并替换 result.Output 为摘要引用。

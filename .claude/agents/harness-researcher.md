@@ -88,6 +88,16 @@ tools: Read, Write, Glob, Grep, WebSearch, WebFetch, mcp__context7__resolve-libr
    - 阅读 examples/ 目录下的示例
    - 分析测试文件，理解框架的实际用法
 
+5. **权威参考资料采集**
+   - 针对调研主题，收集以下来源中与调研主题直接相关的权威文章或文档：
+     - **Anthropic Blog**：https://www.anthropic.com/blog（官方技术博客）
+     - **Anthropic Engineering Blog**：https://www.anthropic.com/research（研究论文与技术报告）
+     - **LangChain Blog**：https://blog.langchain.dev（LangChain 官方博客）
+     - **OpenAI Blog**：https://openai.com/blog（OpenAI 官方博客）
+     - **GitHub Discussions / Issues**：各框架仓库的 Discussions 或关键 RFC Issue
+   - 使用 WebFetch 逐一访问候选参考资料的 URL，**必须确认页面可正常加载且内容与调研主题相关**，不可仅凭标题或训练数据推断其存在
+   - 对于无法访问（返回 404/空内容/重定向至首页）的 URL，从参考资料列表中移除，不得列出
+
 ### 第二步：深度分析
 
 对采集到的信息进行以下分析：
@@ -154,6 +164,11 @@ tools: Read, Write, Glob, Grep, WebSearch, WebFetch, mcp__context7__resolve-libr
 - Agent 定义示例
 - Tool 注册示例
 - 多 Agent 编排示例
+
+## 9. 权威参考资料
+- 列出与本框架及调研主题直接相关的权威资料
+- 每条记录：标题、来源（博客/文档/论文）、URL、一句话摘要
+- 仅列出经 WebFetch 确认可访问且内容相关的资料，不虚构或猜测
 ```
 
 ### 报告文件
@@ -177,6 +192,10 @@ tools: Read, Write, Glob, Grep, WebSearch, WebFetch, mcp__context7__resolve-libr
 ## 5. 最佳实践总结
 ## 6. 技术选型建议
 ## 7. 对本项目（harness9）的启示
+## 8. 权威参考资料
+- 覆盖 Anthropic Blog、LangChain Blog、OpenAI Blog 等来源中与 Agent 框架设计相关的精选文章
+- 每条记录：标题、来源、URL、一句话摘要
+- 仅列出经 WebFetch 确认可访问且内容相关的资料
 ```
 
 文件名：`docs/技术调研/综合对比报告.md`
@@ -220,3 +239,9 @@ tools: Read, Write, Glob, Grep, WebSearch, WebFetch, mcp__context7__resolve-libr
    - 步骤 3：通过 WebSearch 搜索正确地址（搜索词：`{框架名} agent harness github site:github.com`），尝试至少 2 种路径变体
 8. 所有报告内容必须基于实际调研得到的信息，禁止编造 API 或虚构功能。对于以下事实性声明，**必须引用 WebFetch 返回页面中的原文作为依据**，不得依赖训练数据推断：仓库是否 archived、主编程语言、最近提交时间、Star 数、项目是否停止维护、是否被其他项目取代。若 WebFetch 未返回相关字段，该字段写"未确认"而非猜测
 9. 保持客观中立，不过度吹捧或贬低任何框架
+10. **参考资料可访问性约束**：
+    - 参考资料节中列出的每条 URL，必须在生成报告前使用 WebFetch 确认可正常访问（HTTP 200，且页面内容与调研主题相关）
+    - 禁止列出仅凭标题或训练数据"推断存在"的 URL
+    - 禁止列出返回 404、空内容、或重定向至站点首页的 URL
+    - 参考资料来源优先级：官方技术博客（Anthropic/LangChain/OpenAI）> 官方文档站 > GitHub Discussions/RFC > 学术论文
+    - 每个调研主题至少提供 3 条经过验证的参考资料；若确实找不到足够的可访问资料，如实说明已尝试的 URL 及失败原因，不得凑数填写未经验证的链接

@@ -114,11 +114,14 @@ func TestOffloadHook_BeforeExecute_Noop(t *testing.T) {
 	h := hooks.NewOffloadHook(t.TempDir(), "sess1")
 	tc := schema.ToolCall{Name: "bash", ID: "tc-before"}
 	ctx := context.Background()
-	newCtx, err := h.BeforeExecute(ctx, tc)
+	newCtx, dec, err := h.BeforeExecute(ctx, tc)
 	if err != nil {
 		t.Fatalf("BeforeExecute should be no-op, got error: %v", err)
 	}
 	if newCtx != ctx {
 		t.Error("BeforeExecute should return the same context")
+	}
+	if dec.Action != hooks.HookActionAllow {
+		t.Errorf("BeforeExecute should return Allow, got %q", dec.Action)
 	}
 }

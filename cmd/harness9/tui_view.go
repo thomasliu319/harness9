@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/harness9/internal/engine"
 	"github.com/harness9/internal/memory"
 	"github.com/harness9/internal/planning"
 )
@@ -219,6 +220,9 @@ func (m tuiModel) renderStatusBar() string {
 	} else if modeLabel != "" {
 		modePart = dimStyle.Render("  │  ") + planModeLabelStyle.Render(modeLabel)
 	}
+	if m.permMode != engine.PermissionModeDefault {
+		modePart += dimStyle.Render("  │  ") + approvalTitleMedStyle.Render(m.permMode.String())
+	}
 
 	var tasksPart string
 	if m.todoStore != nil {
@@ -340,6 +344,72 @@ func (m tuiModel) renderFooter() string {
 		accent.Render("ctrl+c") + dimStyle.Render(" 退出")
 }
 
+// renderApprovalDialog 渲染工具执行审批对话框。
+// 在 approvalPending == true 时由 View() 插入 StatusBar 之前。
+func (m tuiModel) renderApprovalDialog() string {
+	if m.approvalRequest == nil {
+		return ""
+	}
+	req := m.approvalRequest
+
+	var titleStyle lipgloss.Style
+	switch req.RiskLevel {
+	case "high":
+		titleStyle = approvalTitleHighStyle
+	case "medium":
+		titleStyle = approvalTitleMedStyle
+	default:
+		titleStyle = approvalTitleLowStyle
+	}
+
+	riskLabel := map[string]string{
+		"high":   "高风险",
+		"medium": "中等风险",
+		"low":    "低风险",
+	}[req.RiskLevel]
+	if riskLabel == "" {
+		riskLabel = "需确认"
+	}
+
+	var sb strings.Builder
+	sb.WriteString(titleStyle.Render(fmt.Sprintf("⚠  工具审批请求 [%s]", riskLabel)))
+	sb.WriteString("\n\n")
+	sb.WriteString(dimStyle.Render("工具: ") + lipgloss.NewStyle().Bold(true).Render(req.ToolCall.Name))
+	if req.Reason != "" {
+		sb.WriteString("\n")
+		sb.WriteString(dimStyle.Render("原因: ") + req.Reason)
+	}
+	sb.WriteString("\n\n")
+
+	if m.approvalInputting {
+		sb.WriteString(dimStyle.Render("请输入拒绝原因（Enter 提交，Esc 取消）：\n"))
+		sb.WriteString("> " + m.approvalFeedback + "█")
+	} else {
+		options := []string{
+			"允许（仅本次）",
+			"允许（本会话不再提示）",
+			"总是允许（写入白名单）",
+			"拒绝",
+			"拒绝并提供反馈...",
+		}
+		for i, opt := range options {
+			if i == m.approvalCursor {
+				sb.WriteString(approvalSelectedStyle.Render("▶ ") +
+					approvalSelectedStyle.Render(fmt.Sprintf("[%d] %s", i+1, opt)))
+			} else {
+				sb.WriteString(dimStyle.Render(fmt.Sprintf("  [%d] %s", i+1, opt)))
+			}
+			if i < len(options)-1 {
+				sb.WriteByte('\n')
+			}
+		}
+		sb.WriteString("\n\n")
+		sb.WriteString(dimStyle.Render("↑↓ 移动  Enter/1-5 确认  Esc 拒绝"))
+	}
+
+	return approvalBoxStyle.Render(sb.String())
+}
+
 // View 实现 tea.Model——根据当前 phase 渲染完整 TUI 帧。
 func (m tuiModel) View() string {
 	if m.width == 0 {
@@ -363,6 +433,12 @@ func (m tuiModel) View() string {
 		if m.running && m.currentTool != "" {
 			sb.WriteString(m.renderToolProgress())
 			sb.WriteByte('\n')
+		}
+		if m.approvalPending {
+			sb.WriteString(m.renderApprovalDialog())
+			sb.WriteByte('\n')
+			sb.WriteString(m.renderStatusBar())
+			return sb.String()
 		}
 		if m.planReviewing {
 			sb.WriteString(m.renderPlanReviewDialog())

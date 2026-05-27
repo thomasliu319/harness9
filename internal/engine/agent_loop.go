@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/harness9/internal/hooks"
 	"github.com/harness9/internal/logfmt"
 	"github.com/harness9/internal/memory"
 	"github.com/harness9/internal/planning"
@@ -112,6 +113,7 @@ type AgentEngine struct {
 	compactor          memory.Compactor    // 可选，nil 表示不压缩
 	planMode           planning.PlanMode   // 当前执行模式，影响工具过滤
 	todoStore          *planning.TodoStore // 可选，nil 表示无 planning
+	permissionMode     PermissionMode      // 全局权限策略，影响审批行为
 }
 
 // NewAgentEngine 创建新的 AgentEngine。默认值：maxTurns=50, toolTimeout=60s。
@@ -148,6 +150,10 @@ type emitter struct {
 	tokenUpdate func(tokens, window int)
 	// compaction 在上下文发生有效压缩时调用（token 数减少 > 5%）。
 	compaction func(data CompactionData)
+	// approval 是人类审批回调，注入到工具执行 context 中。
+	// RunStream 模式下通过 EventApprovalRequired 事件驱动 TUI 审批对话框；
+	// Run（阻塞）模式下留 nil，HookActionAsk 视为 Allow（向后兼容）。
+	approval hooks.ApprovalFunc
 }
 
 // Run 执行单个用户 prompt 的阻塞式主循环，文本输出到 stdout。
@@ -431,6 +437,10 @@ func (e *AgentEngine) executeTools(ctx context.Context, turn int, toolCalls []sc
 			if e.toolTimeout > 0 {
 				toolCtx, cancel = context.WithTimeout(ctx, e.toolTimeout)
 				defer cancel()
+			}
+
+			if em.approval != nil {
+				toolCtx = hooks.WithApprovalFn(toolCtx, em.approval)
 			}
 
 			em.toolStart(turn, tc)

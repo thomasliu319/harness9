@@ -29,6 +29,7 @@ import (
 	"github.com/harness9/internal/hooks"
 	"github.com/harness9/internal/logfmt"
 	"github.com/harness9/internal/memory"
+	"github.com/harness9/internal/permission"
 	"github.com/harness9/internal/planning"
 	"github.com/harness9/internal/provider"
 	"github.com/harness9/internal/skills"
@@ -127,7 +128,14 @@ func main() {
 	}
 
 	offloadHook := hooks.NewOffloadHook(workDir, sess.SessionID())
-	hookReg := hooks.NewHookRegistry(registry, offloadHook)
+	dangerHook := hooks.NewDangerHook()
+
+	settingsPath := filepath.Join(workDir, ".harness9", "settings.json")
+	// NewFileHook 每次工具调用时从磁盘重新读取规则，确保 TUI 写入白名单后下次调用立即生效。
+	permHook := permission.NewFileHook(settingsPath)
+
+	// Hook 执行顺序：PermissionHook（配置规则）→ DangerHook（内置模式）→ OffloadHook（大输出）
+	hookReg := hooks.NewHookRegistry(registry, permHook, dangerHook, offloadHook)
 
 	modelLimits := provider.GetModelLimits(modelName)
 	// SummarizationCompactor 使用同一 LLM 生成摘要，内置 TokenBudgetCompactor 作为错误回退。

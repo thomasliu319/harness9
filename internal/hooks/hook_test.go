@@ -26,13 +26,22 @@ func (e *echoTool) Execute(_ context.Context, _ json.RawMessage) (string, error)
 type recordHook struct {
 	id        string
 	log       *[]string
+	beforeDec hooks.HookDecision
 	beforeErr error
 }
 
-func (r *recordHook) BeforeExecute(ctx context.Context, tc schema.ToolCall) (context.Context, error) {
+func (r *recordHook) BeforeExecute(ctx context.Context, tc schema.ToolCall) (context.Context, hooks.HookDecision, error) {
 	*r.log = append(*r.log, "before:"+r.id)
-	return ctx, r.beforeErr
+	if r.beforeErr != nil {
+		return ctx, hooks.HookDecision{}, r.beforeErr
+	}
+	dec := r.beforeDec
+	if dec.Action == "" {
+		dec = hooks.Allow()
+	}
+	return ctx, dec, nil
 }
+
 func (r *recordHook) AfterExecute(ctx context.Context, tc schema.ToolCall, result schema.ToolResult) schema.ToolResult {
 	*r.log = append(*r.log, "after:"+r.id)
 	return result
@@ -110,5 +119,67 @@ func TestHookRegistry_Register_Delegates(t *testing.T) {
 	defs := hr.GetAvailableTools()
 	if len(defs) != 1 || defs[0].Name != "x" {
 		t.Errorf("GetAvailableTools = %v, want [{x}]", defs)
+	}
+}
+
+func TestHookRegistry_BeforeDeny(t *testing.T) {
+	inner := newInnerWithEcho(t)
+	var log []string
+	h := &recordHook{id: "A", log: &log, beforeDec: hooks.Deny("forbidden")}
+	hr := hooks.NewHookRegistry(inner, h)
+
+	result := hr.Execute(context.Background(), schema.ToolCall{Name: "echo", ID: "5"})
+	if !result.IsError {
+		t.Fatal("expected IsError=true on Deny")
+	}
+	if result.Output != "forbidden" {
+		t.Errorf("output=%q, want %q", result.Output, "forbidden")
+	}
+	for _, entry := range log {
+		if entry == "after:A" {
+			t.Error("AfterExecute must not be called after Deny")
+		}
+	}
+}
+
+func TestHookRegistry_BeforeAsk_NoApprovalFn_Allows(t *testing.T) {
+	inner := newInnerWithEcho(t)
+	var log []string
+	h := &recordHook{id: "A", log: &log, beforeDec: hooks.Ask("risky", "high")}
+	hr := hooks.NewHookRegistry(inner, h)
+
+	result := hr.Execute(context.Background(), schema.ToolCall{Name: "echo", ID: "6"})
+	if result.IsError {
+		t.Fatalf("expected success when no ApprovalFunc: %s", result.Output)
+	}
+}
+
+func TestHookRegistry_BeforeAsk_WithApprovalFn_Deny(t *testing.T) {
+	inner := newInnerWithEcho(t)
+	var log []string
+	h := &recordHook{id: "A", log: &log, beforeDec: hooks.Ask("risky", "high")}
+	hr := hooks.NewHookRegistry(inner, h)
+
+	ctx := hooks.WithApprovalFn(context.Background(), func(_ context.Context, _ schema.ToolCall, _, _ string) hooks.ApprovalResponse {
+		return hooks.ApprovalResponse{Approved: false, Feedback: "user denied"}
+	})
+	result := hr.Execute(ctx, schema.ToolCall{Name: "echo", ID: "7"})
+	if !result.IsError {
+		t.Fatal("expected IsError=true when user denies")
+	}
+}
+
+func TestHookRegistry_BeforeAsk_WithApprovalFn_Allow(t *testing.T) {
+	inner := newInnerWithEcho(t)
+	var log []string
+	h := &recordHook{id: "A", log: &log, beforeDec: hooks.Ask("risky", "high")}
+	hr := hooks.NewHookRegistry(inner, h)
+
+	ctx := hooks.WithApprovalFn(context.Background(), func(_ context.Context, _ schema.ToolCall, _, _ string) hooks.ApprovalResponse {
+		return hooks.ApprovalResponse{Approved: true}
+	})
+	result := hr.Execute(ctx, schema.ToolCall{Name: "echo", ID: "8"})
+	if result.IsError {
+		t.Fatalf("expected success when user approves: %s", result.Output)
 	}
 }

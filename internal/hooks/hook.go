@@ -2,21 +2,26 @@
 //
 // HookRegistry 实现 tools.Registry 接口，在工具执行前后调用注册的 ToolHook 链。
 // BeforeExecute 正向执行；AfterExecute 逆向执行（洋葱模型）。
-// BeforeExecute 返回 error 时立即短路，跳过内层执行和所有 AfterExecute。
+//
+// BeforeExecute 返回 HookDecision：
+//   - Allow：继续调用后续 hook 和内层工具
+//   - Deny：立即短路，不调用内层也不调用 AfterExecute
+//   - Ask：从 context 提取 ApprovalFunc 请求人类审批；无 ApprovalFunc 时视为 Allow
 package hooks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/harness9/internal/schema"
 	"github.com/harness9/internal/tools"
 )
 
 // ToolHook 是双向工具拦截器接口。
-// BeforeExecute 在工具调用前触发，返回 error 时短路整个调用链。
+// BeforeExecute 在工具调用前触发，返回结构化 HookDecision 指导后续流程。
 // AfterExecute 在工具调用后触发，可修改返回的 ToolResult。
 type ToolHook interface {
-	BeforeExecute(ctx context.Context, tc schema.ToolCall) (context.Context, error)
+	BeforeExecute(ctx context.Context, tc schema.ToolCall) (context.Context, HookDecision, error)
 	AfterExecute(ctx context.Context, tc schema.ToolCall, result schema.ToolResult) schema.ToolResult
 }
 
@@ -43,10 +48,17 @@ func (r *HookRegistry) GetAvailableTools() []schema.ToolDefinition {
 }
 
 // Execute 按洋葱模型依次执行 hook 链，中间调用内层 Registry.Execute。
-// 任何 BeforeExecute 返回 error 时立即短路，不调用内层也不调用 AfterExecute。
+//
+// 决策优先级（每个 hook 依次评估）：
+//   - error           → 立即短路，返回 IsError=true
+//   - HookActionDeny  → 立即拒绝，跳过后续 hook 和 AfterExecute
+//   - HookActionAsk   → 调用 context 中的 ApprovalFunc；无 ApprovalFunc 时视为 Allow
+//   - HookActionAllow → 继续
 func (r *HookRegistry) Execute(ctx context.Context, call schema.ToolCall) schema.ToolResult {
+	executed := 0
+
 	for _, h := range r.hooks {
-		newCtx, err := h.BeforeExecute(ctx, call)
+		newCtx, dec, err := h.BeforeExecute(ctx, call)
 		if err != nil {
 			return schema.ToolResult{
 				ToolCallID: call.ID,
@@ -54,12 +66,49 @@ func (r *HookRegistry) Execute(ctx context.Context, call schema.ToolCall) schema
 				IsError:    true,
 			}
 		}
+		switch dec.Action {
+		case HookActionDeny:
+			return schema.ToolResult{
+				ToolCallID: call.ID,
+				Output:     dec.Reason,
+				IsError:    true,
+			}
+		case HookActionAsk:
+			// 若此工具调用已被批准（前置 hook 已询问），直接视为 Allow
+			if isApproved(newCtx) {
+				if dec.ModifiedArgs != nil {
+					call.Arguments = dec.ModifiedArgs
+				}
+				break
+			}
+			if fn := ApprovalFnFromContext(newCtx); fn != nil {
+				resp := fn(newCtx, call, dec.Reason, dec.RiskLevel)
+				if !resp.Approved {
+					reason := "操作被用户拒绝"
+					if resp.Feedback != "" {
+						reason = fmt.Sprintf("操作被用户拒绝: %s", resp.Feedback)
+					}
+					return schema.ToolResult{
+						ToolCallID: call.ID,
+						Output:     reason,
+						IsError:    true,
+					}
+				}
+				if dec.ModifiedArgs != nil {
+					call.Arguments = dec.ModifiedArgs
+				}
+				// 标记此工具调用已被批准，后续 hook 无需再次询问
+				newCtx = withApproved(newCtx)
+			}
+			// 无 ApprovalFunc 时视为 Allow，继续执行
+		}
 		ctx = newCtx
+		executed++
 	}
 
 	result := r.inner.Execute(ctx, call)
 
-	for i := len(r.hooks) - 1; i >= 0; i-- {
+	for i := executed - 1; i >= 0; i-- {
 		result = r.hooks[i].AfterExecute(ctx, call, result)
 	}
 	return result
