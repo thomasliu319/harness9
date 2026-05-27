@@ -19,14 +19,16 @@ import (
 )
 
 // hardSensitivePaths 是永远拒绝访问的敏感路径前缀，不受 workDir 白名单影响。
-var hardSensitivePaths []string
+// 使用绝对路径前缀匹配，防止 LLM 意外或恶意读写凭证文件。
+var hardSensitivePaths = buildSensitivePaths()
 
-func init() {
+func buildSensitivePaths() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return
+		// 无法确定 home dir 时返回空列表，bash DangerHook 作为备份防线。
+		return nil
 	}
-	hardSensitivePaths = []string{
+	return []string{
 		filepath.Join(home, ".ssh"),
 		filepath.Join(home, ".aws"),
 		filepath.Join(home, ".kube"),

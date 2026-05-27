@@ -47,7 +47,10 @@ func TestSafePath_AllowsInsideWorkDir(t *testing.T) {
 }
 
 func TestSafePath_SensitivePathBlocked(t *testing.T) {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home dir")
+	}
 	cases := []struct {
 		inputPath string
 	}{

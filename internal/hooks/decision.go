@@ -1,4 +1,4 @@
-// Package hooks — HookDecision 和 Human-in-the-Loop 审批类型。
+// HookDecision、ApprovalFunc 和 Human-in-the-Loop 审批类型。
 package hooks
 
 import (
@@ -22,7 +22,7 @@ const (
 
 // HookDecision 是 BeforeExecute 返回的结构化决策。
 type HookDecision struct {
-	Action       HookAction      // 决策类型
+	Action       HookAction
 	Reason       string          // 向用户和 LLM 展示的原因（Deny/Ask 时填写）
 	RiskLevel    string          // "low" | "medium" | "high"（驱动 TUI 审批界面配色）
 	ModifiedArgs json.RawMessage // 可选：hook 修改后的工具参数（路径重写等）
