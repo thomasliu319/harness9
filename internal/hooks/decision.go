@@ -64,3 +64,17 @@ func ApprovalFnFromContext(ctx context.Context) ApprovalFunc {
 	fn, _ := ctx.Value(approvalContextKey{}).(ApprovalFunc)
 	return fn
 }
+
+type approvedContextKey struct{}
+
+// withApproved marks in context that a human has already approved this tool call in a previous hook.
+// Subsequent HookActionAsk hooks will see this and skip re-asking.
+func withApproved(ctx context.Context) context.Context {
+	return context.WithValue(ctx, approvedContextKey{}, true)
+}
+
+// isApproved reports whether a human approval was already granted for this tool call.
+func isApproved(ctx context.Context) bool {
+	v, _ := ctx.Value(approvedContextKey{}).(bool)
+	return v
+}

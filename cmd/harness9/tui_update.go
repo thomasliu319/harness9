@@ -1228,6 +1228,8 @@ func (m tuiModel) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.confirmApproval(m.approvalCursor)
 	case tea.KeyEsc:
 		return m.confirmApproval(3)
+	case tea.KeyCtrlC, tea.KeyCtrlD:
+		return m.confirmApproval(3) // treat as deny
 	case tea.KeyRunes:
 		if len(msg.Runes) == 1 {
 			switch msg.Runes[0] {
@@ -1311,7 +1313,22 @@ func (m tuiModel) writeApprovalToConfig(req *engine.ApprovalRequest) {
 	if err != nil {
 		return
 	}
-	pattern := req.ToolCall.Name
+	var pattern string
+	if req.ToolCall.Name == "bash" {
+		var args struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal(req.ToolCall.Arguments, &args); err == nil && args.Command != "" {
+			// 取命令的第一个单词作为关键词
+			fields := strings.Fields(args.Command)
+			if len(fields) > 0 {
+				pattern = fmt.Sprintf("bash(*%s*)", fields[0])
+			}
+		}
+	}
+	if pattern == "" {
+		pattern = req.ToolCall.Name
+	}
 	rules.AddRule(permission.RuleAllow, []string{pattern})
 	if err := os.MkdirAll(filepath.Dir(m.settingsPath), 0700); err != nil {
 		return

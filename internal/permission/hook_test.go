@@ -11,10 +11,7 @@ import (
 
 func TestPermissionHook_Deny(t *testing.T) {
 	r := permission.NewRules()
-	// BeforeExecute passes the raw JSON arguments to Evaluate, so patterns must
-	// match against the JSON-encoded string (e.g. `{"command":"rm -rf /tmp"}`).
-	// Use a no-wildcard substring pattern which globContains handles via strings.Contains.
-	r.AddRule(permission.RuleDeny, []string{"bash(rm -rf)"})
+	r.AddRule(permission.RuleDeny, []string{"bash(rm -rf *)"})
 	h := permission.NewHook(r)
 
 	tc := schema.ToolCall{Name: "bash", Arguments: []byte(`{"command":"rm -rf /tmp"}`)}
@@ -29,8 +26,7 @@ func TestPermissionHook_Deny(t *testing.T) {
 
 func TestPermissionHook_Allow(t *testing.T) {
 	r := permission.NewRules()
-	// Use *git* so globContains filepath.Match finds it in the JSON-encoded argStr.
-	r.AddRule(permission.RuleAllow, []string{"bash(*git*)"})
+	r.AddRule(permission.RuleAllow, []string{"bash(git *)"})
 	h := permission.NewHook(r)
 
 	tc := schema.ToolCall{Name: "bash", Arguments: []byte(`{"command":"git status"}`)}
@@ -45,7 +41,6 @@ func TestPermissionHook_Allow(t *testing.T) {
 
 func TestPermissionHook_Ask_DefaultMediumRisk(t *testing.T) {
 	r := permission.NewRules()
-	// no rules — default is ask
 	h := permission.NewHook(r)
 
 	tc := schema.ToolCall{Name: "bash", Arguments: []byte(`{"command":"echo hello"}`)}

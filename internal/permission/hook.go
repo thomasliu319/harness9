@@ -2,6 +2,7 @@ package permission
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/harness9/internal/hooks"
@@ -20,7 +21,7 @@ func NewHook(rules *Rules) *Hook {
 
 // BeforeExecute 评估工具调用并返回对应 HookDecision。
 func (h *Hook) BeforeExecute(ctx context.Context, tc schema.ToolCall) (context.Context, hooks.HookDecision, error) {
-	argStr := string(tc.Arguments)
+	argStr := extractArgString(tc)
 	action := h.rules.Evaluate(tc.Name, argStr)
 	switch action {
 	case RuleDeny:
@@ -33,6 +34,20 @@ func (h *Hook) BeforeExecute(ctx context.Context, tc schema.ToolCall) (context.C
 	default:
 		return ctx, hooks.Allow(), nil
 	}
+}
+
+// extractArgString 为规则匹配提取可读的参数字符串。
+// bash 工具提取 command 字段；其他工具使用原始 JSON 字节。
+func extractArgString(tc schema.ToolCall) string {
+	if tc.Name == "bash" {
+		var args struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal(tc.Arguments, &args); err == nil && args.Command != "" {
+			return args.Command
+		}
+	}
+	return string(tc.Arguments)
 }
 
 // AfterExecute 是空操作，原样返回结果。

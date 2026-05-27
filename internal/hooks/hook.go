@@ -74,6 +74,13 @@ func (r *HookRegistry) Execute(ctx context.Context, call schema.ToolCall) schema
 				IsError:    true,
 			}
 		case HookActionAsk:
+			// 若此工具调用已被批准（前置 hook 已询问），直接视为 Allow
+			if isApproved(newCtx) {
+				if dec.ModifiedArgs != nil {
+					call.Arguments = dec.ModifiedArgs
+				}
+				break
+			}
 			if fn := ApprovalFnFromContext(newCtx); fn != nil {
 				resp := fn(newCtx, call, dec.Reason, dec.RiskLevel)
 				if !resp.Approved {
@@ -90,6 +97,8 @@ func (r *HookRegistry) Execute(ctx context.Context, call schema.ToolCall) schema
 				if dec.ModifiedArgs != nil {
 					call.Arguments = dec.ModifiedArgs
 				}
+				// 标记此工具调用已被批准，后续 hook 无需再次询问
+				newCtx = withApproved(newCtx)
 			}
 			// 无 ApprovalFunc 时视为 Allow，继续执行
 		}
