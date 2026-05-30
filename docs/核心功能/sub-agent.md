@@ -13,14 +13,14 @@ internal/subagent/
 ├── frontmatter.go  # parseAgentFile：YAML frontmatter + 正文 → SubAgentDefinition
 ├── loader.go       # Registry.LoadFromDir：扫描 .harness9/agents/*.md 文件式定义
 ├── prompt.go       # promptBuilder：子代理 system prompt + Skills 预加载 + workDir 注入
-├── mailbox.go      # Mailbox：线程安全后台结果信箱（Deliver / Drain / SetNotify）
+├── tracker.go      # TaskTracker：后台任务单一事实源（Start/AppendLog/Finish/DrainCompleted/List/Get）
 ├── runner.go       # Runner：构建隔离子引擎 + 运行 RunStream + 桥接审批与进度
 └── task_tool.go    # TaskTool：主代理调用的唯一委派入口（tools.BaseTool）
 
 cmd/harness9/
 ├── main.go         # 接线：注册内置 code-reviewer、LoadFromDir、NewRunner、NewTaskTool
-├── tui_update.go   # EventSubAgent 渲染 + dispatch() 中 Mailbox.Drain 注入
-└── tui_view.go     # renderSubAgentProgress()：[agent] 前缀暗青色进度块
+├── tui_update.go   # EventSubAgent 渲染 + dispatch() 中 TaskTracker.DrainCompleted 注入 + @agent 直跑 + 任务面板按键
+└── tui_view.go     # renderSubAgentProgress()、renderTaskPanel()、renderStatusBar() 后台任务状态栏
 ```
 
 ---
@@ -145,11 +145,12 @@ task 工具立即返回 <task id="task-code-reviewer-1" state="running"/>
     ▼ 同时：go func(){...}()
         execCtx 从会话级 baseCtx 派生（独立于父 turn，不受工具 60s 超时影响）
         审批请求 → 一律拒绝（fail-closed），返回"子代理无可用审批通道，已自动拒绝"
-        子引擎执行完成 → mailbox.Deliver(CompletedTask{...}) 缓冲到信箱
+        子引擎事件流 → tracker.AppendLog(id, update)（全过程日志写入内存，加锁，不经 channel）
+        子引擎执行完成 → tracker.Finish(id, finalText, isErr)
             │ 触发 SetNotify 回调 → tea.Program.Send(subAgentNotifyMsg) → TUI 即时显示完成提示
 
 下一次 dispatch() 前：
-    mailbox.Drain() → 拼入 prompt 前缀 → 注入 LLM 上下文
+    tracker.DrainCompleted() → 拼入 prompt 前缀 → 注入 LLM 上下文
 ```
 
 ---
@@ -171,7 +172,7 @@ task 工具立即返回 <task id="task-code-reviewer-1" state="running"/>
 ```
 父代理 ──► task 工具 ──► prompt 字符串 ──► 子代理（唯一信息来源）
 子代理 ──► FinalText ──► tool result ──► 父代理上下文（前台）
-子代理 ──► Mailbox   ──► Drain 注入 ──► 父代理下次 prompt 前缀（后台）
+子代理 ──► TaskTracker ──► DrainCompleted ──► 父代理下次 prompt 前缀（后台）
 ```
 
 子代理**看不到**父代理的对话历史和 system prompt。文件路径、背景信息、需求细节必须通过 `task` 工具的 `prompt` 参数显式传递。
@@ -182,7 +183,8 @@ task 工具立即返回 <task id="task-code-reviewer-1" state="running"/>
 |------|--------------------------|--------------------------|
 | execCtx 来源 | 父调用方 `ctx`（工具超时 60s 以内） | 会话级 `baseCtx` 派生（独立于父 turn） |
 | 审批策略 | 透传父 `ApprovalFunc`，TUI 审批对话框可用 | 一律拒绝（fail-closed） |
-| 结果交付 | tool result 同步返回 | `Mailbox.Deliver` 投递，下次 dispatch 时注入 |
+| 结果交付 | tool result 同步返回 | `TaskTracker.Finish` 写入内存，下次 dispatch 时 `DrainCompleted` 注入 |
+| 进度日志 | 经 `EventSubAgent` 实时渲染到 subAgentLines | `TaskTracker.AppendLog` 缓冲到内存，可通过 `/tasks` 面板查看 |
 | 取消传播 | 父 ctx 取消 → 子代理随之取消 | baseCtx 取消（进程关闭）才取消 |
 
 ---
@@ -222,22 +224,148 @@ task 工具立即返回 <task id="task-code-reviewer-1" state="running"/>
 
 ---
 
-## Mailbox — 后台结果信箱
+## TaskTracker — 后台任务单一事实源
 
-`Mailbox` 是后台子代理结果的线程安全缓冲区：
+`TaskTracker` 是后台子代理任务的线程安全单一事实源，替代旧版 `Mailbox`，同时承担全过程日志缓冲与结果注入两项职责：
 
-```go
-// 后台 goroutine 投递完成结果
-mailbox.Deliver(CompletedTask{TaskID: "task-code-reviewer-1", AgentName: "code-reviewer", FinalText: "..."})
+### API 一览
 
-// TUI dispatch() 开始前排空
-done := mailbox.Drain()  // 线程安全，立即清空
-// → prompt 前缀注入，格式：
-// [后台子代理已完成，结果如下]
-// - 子代理 code-reviewer（完成）: ...
+| 方法 | 调用方 | 说明 |
+|------|--------|------|
+| `Start(agentName, prompt) string` | 后台 goroutine 启动时 | 注册 Running 任务，返回唯一 `id`（格式 `task-{agent}-{seq}`） |
+| `AppendLog(id, SubAgentUpdate)` | 后台 goroutine 流式推进中 | 将进度事件追加到内存缓冲（加锁），不经任何 channel |
+| `Finish(id, finalText, isErr)` | 后台 goroutine 完成时 | 标记 Done/Failed，触发 `SetNotify` 回调（锁外调用） |
+| `DrainCompleted() []CompletedTask` | TUI `dispatch()` 前 | 返回已完成未注入结果，标记为 injected（幂等） |
+| `List() []TaskSnapshot` | TUI 任务面板 | 全量快照，按创建顺序 |
+| `Get(id) (TaskDetail, bool)` | TUI 任务详情 | 返回含全过程日志深拷贝的 `TaskDetail` |
+| `RunningCount() int` | TUI 状态栏 | 运行中任务数 |
+| `DoneCount() int` | TUI 状态栏 | 已结束（完成 + 失败）任务数 |
+| `SetNotify(fn func())` | TUI 初始化时 | 注册完成通知回调 |
+
+### 两条独立路径
+
+**注入路径**：`Finish` 将最终文本写入内存，父代理**下次 dispatch** 时 `DrainCompleted` 排空并前置拼入 LLM 上下文（`pendingSubAgentInject` 缓冲）。`DrainCompleted` 是幂等的，已注入的结果不会被再次取走。
+
+**提示路径**：`Finish` 同时触发 `SetNotify` 回调——TUI 在启动时将其注册为 `tea.Program.Send(subAgentNotifyMsg{})`，后台任务完成瞬间即向 scrollback 追加一条「✓ 后台子代理完成」提示（仅展示，不消费注入缓冲，二者互不干扰）。
+
+**全过程日志**：`AppendLog` 直接写入内存缓冲（加锁），完全不经 channel，从根本上杜绝 send-on-closed-channel 风险。日志通过 `Get(id).Log` 暴露给 `/tasks` 面板详情页。
+
+---
+
+## 后台任务查看器
+
+### 状态栏指示
+
+状态栏在存在后台任务时自动显示任务计数段：
+
+```
+⚙ 2 运行/3 完成
 ```
 
-结果的**注入**与**提示**是两条独立路径：`Deliver` 将 `CompletedTask` 追加到信箱缓冲区，结果在父代理**下次 dispatch** 时由消费侧（TUI/CLI）`Drain` 排空并前置注入 LLM 上下文（这是结果进入对话的唯一渠道）。与此同时，`Deliver` 触发 `SetNotify` 回调——TUI 在 `RunTUI` 中将其注册为 `tea.Program.Send(subAgentNotifyMsg{})`，从而在后台任务完成的瞬间向 scrollback 追加一条「✓ 后台子代理完成（N 个结果待处理）」提示（仅展示、**不** Drain，避免与 dispatch 的注入路径争抢结果）。
+由 `renderStatusBar()` 调用 `TaskTracker.RunningCount()` 和 `DoneCount()` 实时读取，仅在至少有一个任务（运行中或已完成）时展示，零任务时不占用状态栏空间。
+
+### 打开面板
+
+两种等价方式：
+
+| 方式 | 说明 |
+|------|------|
+| `Ctrl+T` | 键盘快捷键切换（空闲态可用；运行中、审批、审查、恢复选择等模态冲突时忽略） |
+| `/tasks` + Enter | 斜杠命令，效果与 `Ctrl+T` 完全相同 |
+
+面板为**模态视图**：激活时 `taskPanelMode = true`，`View()` 将输入区替换为 `renderTaskPanel()` 渲染的面板内容，普通输入和其他快捷键全部由 `handleTaskPanelKey` 接管。
+
+### 列表视图
+
+面板打开时默认展示任务列表，每行格式：
+
+```
+{● 运行/✓ 完成/✗ 失败}  {agent}  {状态文字}  "{prompt 前 48 字节}"
+```
+
+当前选中行以 `▶` 高亮。按键说明：
+
+| 按键 | 行为 |
+|------|------|
+| `↑` / `↓` | 移动光标 |
+| `Enter` | 进入选中任务的详情视图 |
+| `Esc` 或 `Ctrl+T` | 关闭面板，返回正常输入模式 |
+
+### 详情视图
+
+按 `Enter` 选中任务后进入详情视图，展示该后台子代理的全过程日志（通过 `TaskTracker.Get(id)` 取 `TaskDetail.Log` 深拷贝）：
+
+```
+code-reviewer — 完成  （↑↓ 滚动，Esc 返回）
+
+启动…
+▸ read_file(main.go)
+▸ bash(go vet ./...)
+  ✗ 工具执行失败
+发现 2 处安全问题…
+
+— 最终结果 —
+建议修复以下两处…
+```
+
+日志渲染由 `formatTaskLog` 完成，覆盖 `SubAgentStart / SubAgentToolStart / SubAgentDelta / SubAgentToolResult（仅失败）/ SubAgentError` 五种事件，`SubAgentDone` 及 `FinalText` 合并为结尾「最终结果」块。
+
+| 按键 | 行为 |
+|------|------|
+| `↑` / `↓` | 滚动日志（`taskDetailScroll` 偏移） |
+| `Esc` | 返回列表视图（`taskDetailID = ""`） |
+| `Ctrl+T` | 关闭整个面板 |
+
+### 实时刷新
+
+运行中的任务每次面板渲染时直接读取 `TaskTracker` 快照（`List()` / `Get()`），无需订阅通知，TUI 主循环驱动即可保持日志行数（`LogLines`）的实时更新。
+
+---
+
+## @ 提及调用
+
+### 基本用法
+
+在输入框中以 `@<agent> <task>` 格式发送，**绕过主 LLM 的工具决策**，直接前台调用指定子代理：
+
+```
+@code-reviewer 审查 internal/tools/bash.go 的安全性
+```
+
+发送后：
+1. TUI 立即追加用户消息行（`▶ You: @code-reviewer …`）
+2. 子代理名称行（`◆ code-reviewer:`）追加到 scrollback
+3. `running = true`，输入框禁用
+4. 子代理流式进度实时渲染到 `subAgentLines`（与 `task` 工具前台执行完全相同的渲染路径）
+5. 完成后，最终文本直接追加到 scrollback（作为 assistant 消息落入对话），`running = false`，输入框恢复
+
+### Tab 补全子代理名
+
+在输入框键入 `@` 后按 `Tab`，自动补全已注册的子代理名：
+
+```
+@cod[Tab] → @code-reviewer 
+```
+
+补全逻辑在 `cycleCompletion()` 中处理，以 `@` 守卫与 `/` 斜杠命令补全并列，共享同一套 `typedPrefix / completions / completionIdx` 循环状态，多次 `Tab` 可在所有匹配名称中循环。
+
+### Ctrl+C 取消
+
+`@agent` 执行期间按 `Ctrl+C`：`cancelFn()` 取消派生的子 context，Runner 中 `execCtx.Done()` 触发，子引擎 `RunStream` 随之退出；`subAgentDirectMsg{done: true, err: ctx.Err()}` 经 channel 发回 TUI，`running = false`，输入框恢复。
+
+### 前台 vs 后台
+
+`@` 语法**仅支持前台执行**（`background=false`）。
+
+需要后台执行时，通过自然语言向主代理表达意图（如「在后台用 code-reviewer 检查一下最新提交」），由主 LLM 决策调用 `task` 工具并附 `background=true`，结果出现在 `/tasks` 面板。
+
+| 维度 | `@agent task`（前台直跑） | 主 LLM → `task(background=true)` |
+|------|--------------------------|-----------------------------------|
+| 触发方 | 用户直接输入 | 主 LLM 工具决策 |
+| 主 LLM 是否介入 | 否，完全绕过 | 是，由 LLM 选择子代理和 prompt |
+| 执行模式 | 前台阻塞，流式进度可见 | 后台异步，结果存入 TaskTracker |
+| 结果落点 | 直接展示在 scrollback | `/tasks` 面板 + 下次 dispatch 注入 |
+| 取消 | `Ctrl+C` 即时取消 | baseCtx 取消（进程关闭）才取消 |
 
 ---
 
@@ -277,8 +405,9 @@ Runner.Run(ctx, def, prompt, background)
            └─ EventDone          → channel 关闭，循环自然结束
                    │
     前台: return FinalText → task tool result → 父代理上下文
-    后台: mailbox.Deliver(CompletedTask{...})
-              → 下次 dispatch() → Drain() → prompt 前缀注入 → 主代理 LLM
+    后台: tracker.AppendLog(id, update)（流式，全过程日志入内存）
+          tracker.Finish(id, finalText, isErr)
+              → 下次 dispatch() → DrainCompleted() → prompt 前缀注入 → 主代理 LLM
 ```
 
 ---
@@ -304,7 +433,7 @@ subAgentReg.Register(subagent.SubAgentDefinition{
 subAgentReg.LoadFromDir(filepath.Join(workDir, ".harness9", "agents"))
 
 // 3. Runner：全局持有一份，运行期只读
-subAgentMailbox := subagent.NewMailbox()
+subAgentTracker := subagent.NewTaskTracker()
 subAgentRunner := subagent.NewRunner(subagent.RunnerConfig{
     BaseTools:       subAgentBaseTools,
     SharedHooks:     []hooks.ToolHook{dangerHook, offloadHook},
@@ -319,7 +448,7 @@ subAgentRunner := subagent.NewRunner(subagent.RunnerConfig{
 })
 
 // 4. 注册 task 工具进父代理 registry
-taskTool := subagent.NewTaskTool(subAgentReg, subAgentRunner, subAgentMailbox)
+taskTool := subagent.NewTaskTool(subAgentReg, subAgentRunner, subAgentTracker)
 registry.Register(taskTool)
 ```
 
@@ -334,12 +463,12 @@ registry.Register(taskTool)
 | `internal/subagent/frontmatter.go` | `parseAgentFile`：YAML frontmatter 解析 |
 | `internal/subagent/loader.go` | `Registry.LoadFromDir`：文件式定义加载 |
 | `internal/subagent/prompt.go` | `promptBuilder`：system prompt + skills + workDir 组装 |
-| `internal/subagent/mailbox.go` | `Mailbox`：后台结果线程安全信箱 |
+| `internal/subagent/tracker.go` | `TaskTracker`：后台任务单一事实源（全过程日志 + 结果注入） |
 | `internal/subagent/runner.go` | `Runner`：构建隔离子引擎 + 执行 + 事件转发 |
 | `internal/subagent/task_tool.go` | `TaskTool`：`task` 工具实现（前台 / 后台） |
 | `internal/schema/subagent.go` | `SubAgentUpdate` / `SubAgentUpdateKind` 类型定义 |
 | `internal/hooks/subagent_progress.go` | `SubAgentProgressFunc`：context 注入/提取 |
 | `internal/engine/stream.go` | `EventSubAgent`、`EventApprovalRequired`、进度 sink 注入 |
 | `cmd/harness9/main.go` | 完整接线：内置子代理注册、Runner 构建、task 工具注册 |
-| `cmd/harness9/tui_update.go` | `EventSubAgent` 处理、`dispatch()` 中 Mailbox.Drain 注入 |
-| `cmd/harness9/tui_view.go` | `renderSubAgentProgress()`：暗青色进度块渲染 |
+| `cmd/harness9/tui_update.go` | `EventSubAgent` 处理、`dispatch()` 中 `TaskTracker.DrainCompleted` 注入、`dispatchMention`（@ 前台直跑）、`handleTaskPanelKey`（任务面板按键） |
+| `cmd/harness9/tui_view.go` | `renderSubAgentProgress()`（暗青色进度块）、`renderTaskPanel()`（面板列表/详情）、`renderStatusBar()` 中后台任务计数 |
