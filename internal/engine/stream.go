@@ -83,7 +83,8 @@ type Event struct {
 	//   EventActionDelta  → string, EventThinkingDelta → string,
 	//   EventToolStart    → schema.ToolCall,
 	//   EventToolResult   → ToolResultData, EventDone → nil, EventError → string,
-	//   EventTokenUpdate  → TokenUpdateData, EventCompaction → CompactionData
+	//   EventTokenUpdate  → TokenUpdateData, EventCompaction → CompactionData,
+	//   EventSubAgent     → schema.SubAgentUpdate
 	Data any `json:"data,omitempty"`
 }
 
