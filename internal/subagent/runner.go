@@ -34,7 +34,6 @@ type Runner struct {
 type SubAgentResult struct {
 	AgentID   string
 	FinalText string
-	TurnCount int
 }
 
 // denyTaskHook 是纵深防御 hook：始终拒绝子代理调用 task 工具（防递归）。
@@ -162,8 +161,7 @@ func (r *Runner) Run(ctx context.Context, def SubAgentDefinition, prompt string,
 			}
 		case engine.EventToolResult:
 			if d, ok := evt.Data.(engine.ToolResultData); ok {
-				emit(schema.SubAgentUpdate{Kind: schema.SubAgentToolResult,
-					ToolName: d.Result.ToolCallID, IsError: d.Result.IsError})
+				emit(schema.SubAgentUpdate{Kind: schema.SubAgentToolResult, IsError: d.Result.IsError})
 			}
 		case engine.EventApprovalRequired:
 			req, ok := evt.Data.(engine.ApprovalRequest)
