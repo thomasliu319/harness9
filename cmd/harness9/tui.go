@@ -326,6 +326,11 @@ func RunTUI(ctx context.Context, eng *engine.AgentEngine, mgr *memory.Manager, s
 	defer log.SetOutput(origWriter)
 	m := newTUIModel(eng, idx, mgr, sess, todoStore, mailbox, ctx, workDir, modelName)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx), tea.WithMouseCellMotion())
+	// 后台子代理完成时，经 Mailbox 通知回调向 TUI 投递 subAgentNotifyMsg，触发即时完成提示。
+	// p.Send 是 goroutine-safe 的，可从后台 goroutine 调用。
+	if mailbox != nil {
+		mailbox.SetNotify(func() { p.Send(subAgentNotifyMsg{}) })
+	}
 	_, err := p.Run()
 	return err
 }

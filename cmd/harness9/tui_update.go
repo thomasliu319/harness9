@@ -92,6 +92,10 @@ type shellResultMsg struct {
 	dur    time.Duration
 }
 
+// subAgentNotifyMsg 由 Mailbox 完成通知回调经 tea.Program.Send 投递，
+// 触发一条即时的后台子代理完成提示（不消费结果——结果仍在下次 dispatch 时 Drain 注入 LLM）。
+type subAgentNotifyMsg struct{}
+
 // readNextEvent 返回一个 tea.Cmd，该 Cmd 阻塞直到 ch 中有一个 Event，
 // 然后以 eventMsg 形式递交给 Update。ch 关闭时递交 EventDone。
 func readNextEvent(ch <-chan engine.Event) tea.Cmd {
@@ -314,6 +318,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			fmt.Sprintf("$ %s\n%s", msg.cmd, storedOutput))
 		m.input.Focus()
 		return m, textinput.Blink
+
+	case subAgentNotifyMsg:
+		// 仅展示提示，不 Drain（Drain 由 dispatch 在下次发送 prompt 前执行，确保结果注入 LLM）。
+		if m.subAgentMailbox != nil {
+			if n := m.subAgentMailbox.Pending(); n > 0 {
+				m.lines = append(m.lines, dimStyle.Render(fmt.Sprintf("  ✓ 后台子代理完成（%d 个结果待处理，将在下次对话注入）", n)))
+			}
+		}
+		return m, nil
 	}
 
 	if !m.running {
