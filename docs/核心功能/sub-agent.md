@@ -37,8 +37,7 @@ subAgentReg.Register(subagent.SubAgentDefinition{
     Description:  "代码审查专家。写完或修改代码后主动使用，检查安全、性能与最佳实践。",
     SystemPrompt: "你是一名资深代码审查专家。审查时聚焦：安全漏洞、性能问题、可维护性。...",
     Tools:        []string{"read_file", "bash"},
-    MaxTurns:     20,
-    Source:       "builtin",
+    Source:       "builtin", // 不设 MaxTurns，继承默认（= 主代理 agentMaxTurns）
 })
 ```
 
@@ -54,7 +53,7 @@ harness9 内置了一个 `code-reviewer` 子代理，覆盖最常见的代码审
 | `Tools` | `[]string` | 工具白名单；nil/空 = 继承父全部可用工具 |
 | `DisallowedTools` | `[]string` | 工具黑名单（先 deny 后 allow） |
 | `Model` | `string` | 模型覆盖；`""` = 继承父代理模型 |
-| `MaxTurns` | `int` | 最大轮数；`0` = 继承引擎默认值（当前 20） |
+| `MaxTurns` | `int` | 最大轮数；`0` = 继承默认值（与主代理一致，当前 50） |
 | `Skills` | `[]string` | 启动时预加载的 skill 名称（正文注入子代理 system prompt） |
 | `Source` | `string` | 诊断字段：`"builtin"` 或文件路径 |
 
@@ -428,7 +427,7 @@ subAgentBaseTools := []tools.BaseTool{
 subAgentReg := subagent.NewRegistry()
 subAgentReg.Register(subagent.SubAgentDefinition{
     Name: "code-reviewer", Description: "...", SystemPrompt: "...",
-    Tools: []string{"read_file", "bash"}, MaxTurns: 20, Source: "builtin",
+    Tools: []string{"read_file", "bash"}, Source: "builtin",
 })
 subAgentReg.LoadFromDir(filepath.Join(workDir, ".harness9", "agents"))
 
@@ -440,7 +439,7 @@ subAgentRunner := subagent.NewRunner(subagent.RunnerConfig{
     SettingsPath:    settingsPath,
     SkillsIndex:     skillsIndex,
     WorkDir:         workDir,
-    DefaultMaxTurns: 20,
+    DefaultMaxTurns: agentMaxTurns, // = 主代理 50，子代理与主代理一致
     ToolTimeout:     60 * time.Second,
     ProviderFor:     func(model string) (provider.LLMProvider, int, error) { ... },
     CompactorFor:    func(p provider.LLMProvider, ctxWin int) memory.Compactor { ... },
