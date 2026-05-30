@@ -186,3 +186,35 @@ func (r *Runner) Run(ctx context.Context, def SubAgentDefinition, prompt string,
 	emit(schema.SubAgentUpdate{Kind: schema.SubAgentDone, Text: currentTurnText})
 	return SubAgentResult{AgentID: childID, FinalText: currentTurnText}, nil
 }
+
+// RunnerConfig 是 NewRunner 的配置。
+type RunnerConfig struct {
+	BaseTools          []tools.BaseTool
+	SharedHooks        []hooks.ToolHook
+	SettingsPath       string
+	SkillsIndex        *skills.Index
+	WorkDir            string
+	DefaultMaxTurns    int
+	ToolTimeout        time.Duration
+	MaxConcurrentTools int
+	ProviderFor        func(model string) (provider.LLMProvider, int, error)
+	CompactorFor       func(p provider.LLMProvider, ctxWin int) memory.Compactor
+	BaseCtx            context.Context
+}
+
+// NewRunner 从配置构造 Runner。
+func NewRunner(cfg RunnerConfig) *Runner {
+	return &Runner{
+		baseTools:          cfg.BaseTools,
+		sharedHooks:        cfg.SharedHooks,
+		settingsPath:       cfg.SettingsPath,
+		skillsIndex:        cfg.SkillsIndex,
+		workDir:            cfg.WorkDir,
+		defaultMaxTurns:    cfg.DefaultMaxTurns,
+		toolTimeout:        cfg.ToolTimeout,
+		maxConcurrentTools: cfg.MaxConcurrentTools,
+		providerFor:        cfg.ProviderFor,
+		compactorFor:       cfg.CompactorFor,
+		baseCtx:            cfg.BaseCtx,
+	}
+}

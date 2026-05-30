@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/charmbracelet/x/term"
 
@@ -33,6 +34,7 @@ import (
 	"github.com/harness9/internal/planning"
 	"github.com/harness9/internal/provider"
 	"github.com/harness9/internal/skills"
+	"github.com/harness9/internal/subagent"
 	"github.com/harness9/internal/tools"
 )
 
@@ -159,10 +161,70 @@ Flags:
 	// NewFileHook 每次工具调用时从磁盘重新读取规则，确保 TUI 写入白名单后下次调用立即生效。
 	permHook := permission.NewFileHook(settingsPath)
 
+	modelLimits := provider.GetModelLimits(modelName)
+
+	// ---- Sub-Agent 系统接线 ----
+	// 子代理可用的基础工具实例（独立实例，沙箱根目录同为 workDir）。
+	subAgentBaseTools := []tools.BaseTool{
+		tools.NewReadFileTool(workDir),
+		tools.NewWriteFileTool(workDir),
+		tools.NewBashTool(workDir),
+		tools.NewEditFileTool(workDir),
+		skills.NewUseSkillTool(skillsIndex),
+	}
+
+	// 子代理定义注册表：先注册内置，再加载文件式定义（文件可覆盖同名内置）。
+	subAgentReg := subagent.NewRegistry()
+	if err := subAgentReg.Register(subagent.SubAgentDefinition{
+		Name:         "code-reviewer",
+		Description:  "代码审查专家。写完或修改代码后主动使用，检查安全、性能与最佳实践。",
+		SystemPrompt: "你是一名资深代码审查专家。审查时聚焦：安全漏洞、性能问题、可维护性。给出具体、可操作的改进建议，引用文件与行号。",
+		Tools:        []string{"read_file", "bash"},
+		MaxTurns:     20,
+		Source:       "builtin",
+	}); err != nil {
+		log.Print(logfmt.FormatMsg("main", fmt.Sprintf("注册内置子代理失败: %v", err)))
+	}
+	if err := subAgentReg.LoadFromDir(filepath.Join(workDir, ".harness9", "agents")); err != nil {
+		log.Print(logfmt.FormatMsg("main", fmt.Sprintf("加载文件式子代理失败: %v", err)))
+	}
+
+	subAgentMailbox := subagent.NewMailbox()
+	_ = subAgentMailbox // TODO(task13): 传入 RunTUI
+	subAgentRunner := subagent.NewRunner(subagent.RunnerConfig{
+		BaseTools:          subAgentBaseTools,
+		SharedHooks:        []hooks.ToolHook{dangerHook, offloadHook},
+		SettingsPath:       settingsPath,
+		SkillsIndex:        skillsIndex,
+		WorkDir:            workDir,
+		DefaultMaxTurns:    20,
+		ToolTimeout:        60 * time.Second,
+		MaxConcurrentTools: 0,
+		ProviderFor: func(model string) (provider.LLMProvider, int, error) {
+			if model == "" {
+				return llm, modelLimits.ContextTokens, nil
+			}
+			p, err := provider.NewOpenAIProvider(model)
+			if err != nil {
+				return nil, 0, err
+			}
+			return p, provider.GetModelLimits(model).ContextTokens, nil
+		},
+		CompactorFor: func(p provider.LLMProvider, ctxWin int) memory.Compactor {
+			return memory.NewSummarizationCompactor(p, ctxWin)
+		},
+		BaseCtx: ctx,
+	})
+
+	taskTool := subagent.NewTaskTool(subAgentReg, subAgentRunner, subAgentMailbox)
+	if err := registry.Register(taskTool); err != nil {
+		log.Print(logfmt.FormatMsg("main", fmt.Sprintf("注册 task 工具失败: %v", err)))
+	}
+	// ---- Sub-Agent 接线结束 ----
+
 	// Hook 执行顺序：PermissionHook（配置规则）→ DangerHook（内置模式）→ OffloadHook（大输出）
 	hookReg := hooks.NewHookRegistry(registry, permHook, dangerHook, offloadHook)
 
-	modelLimits := provider.GetModelLimits(modelName)
 	// SummarizationCompactor 使用同一 LLM 生成摘要，内置 TokenBudgetCompactor 作为错误回退。
 	compactor := memory.NewSummarizationCompactor(llm, modelLimits.ContextTokens,
 		memory.WithTodoInjector(todoStore),
