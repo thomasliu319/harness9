@@ -811,7 +811,14 @@ func (m tuiModel) cycleCompletion() tuiModel {
 // 内置命令附带描述，Skills 仅显示名称。
 func (m tuiModel) buildCompletionHint() string {
 	raw := m.input.Value()
-	if !strings.HasPrefix(raw, "/") || m.resumeSelecting {
+	if m.resumeSelecting {
+		return ""
+	}
+	// @ 前缀：列出匹配的子代理建议（名称 + 截断描述），与 / 命令提示风格一致。
+	if strings.HasPrefix(raw, "@") {
+		return m.buildMentionHint(raw)
+	}
+	if !strings.HasPrefix(raw, "/") {
 		return ""
 	}
 	prefix := strings.TrimPrefix(strings.SplitN(raw, " ", 2)[0], "/")
@@ -862,6 +869,50 @@ func (m tuiModel) buildCompletionHint() string {
 		} else {
 			parts[i] = nameRendered
 		}
+	}
+	return "  ↹  " + strings.Join(parts, "   ")
+}
+
+// buildMentionHint 为 @ 前缀生成子代理建议提示：列出名称匹配的子代理及其截断描述。
+// 与 buildCompletionHint 的 / 分支同构：Tab 循环中用缓存列表（高亮选中项），否则按前缀实时匹配。
+func (m tuiModel) buildMentionHint(raw string) string {
+	if m.subAgentReg == nil {
+		return ""
+	}
+	prefix := strings.TrimPrefix(strings.SplitN(raw, " ", 2)[0], "@")
+
+	type entry struct {
+		name string
+		desc string
+	}
+	var entries []entry
+	if m.typedPrefix != "" && len(m.completions) > 0 {
+		descOf := make(map[string]string)
+		for _, d := range m.subAgentReg.List() {
+			descOf[d.Name] = d.Description
+		}
+		for _, n := range m.completions {
+			entries = append(entries, entry{name: n, desc: descOf[n]})
+		}
+	} else {
+		for _, d := range m.subAgentReg.List() {
+			if strings.HasPrefix(d.Name, prefix) {
+				entries = append(entries, entry{name: d.Name, desc: d.Description})
+			}
+		}
+	}
+	if len(entries) == 0 {
+		return ""
+	}
+
+	parts := make([]string, len(entries))
+	for i, e := range entries {
+		selected := m.typedPrefix != "" && i == m.completionIdx
+		nameRendered := skillStyle.Render("@" + e.name)
+		if !selected {
+			nameRendered = dimStyle.Render("@" + e.name)
+		}
+		parts[i] = nameRendered + " " + dimStyle.Render("("+truncateUTF8(e.desc, 24)+")")
 	}
 	return "  ↹  " + strings.Join(parts, "   ")
 }

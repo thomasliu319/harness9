@@ -1135,3 +1135,34 @@ func TestHandleTaskPanelKeyNavigation(t *testing.T) {
 		t.Fatal("列表态 Esc 应关闭面板")
 	}
 }
+
+// TestBuildMentionHint 验证 @ 前缀的子代理建议提示：前缀匹配、全列出、无匹配。
+func TestBuildMentionHint(t *testing.T) {
+	reg := subagent.NewRegistry()
+	_ = reg.Register(subagent.SubAgentDefinition{Name: "explorer", Description: "只读代码探索", SystemPrompt: "p"})
+	_ = reg.Register(subagent.SubAgentDefinition{Name: "code-reviewer", Description: "代码审查", SystemPrompt: "p"})
+
+	m := newTestModel()
+	m.subAgentReg = reg
+
+	// 前缀 @expl → 仅 explorer
+	m.input.SetValue("@expl")
+	hint := m.buildCompletionHint()
+	if !strings.Contains(hint, "explorer") {
+		t.Fatalf("@expl 应建议 explorer: %q", hint)
+	}
+	if strings.Contains(hint, "code-reviewer") {
+		t.Fatalf("@expl 不应包含 code-reviewer: %q", hint)
+	}
+	// 裸 @ → 列出全部
+	m.input.SetValue("@")
+	hint = m.buildCompletionHint()
+	if !strings.Contains(hint, "explorer") || !strings.Contains(hint, "code-reviewer") {
+		t.Fatalf("@ 应列出全部子代理: %q", hint)
+	}
+	// 无匹配 → 空
+	m.input.SetValue("@zzz")
+	if h := m.buildCompletionHint(); h != "" {
+		t.Fatalf("@zzz 无匹配应返回空, 得 %q", h)
+	}
+}
