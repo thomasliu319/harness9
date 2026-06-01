@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "sync": "node scripts/sync-docs.mjs",
+    "test": "node scripts/sync-docs.test.mjs",
     "predev": "npm run sync",
     "dev": "vitepress dev",
     "prebuild": "npm run sync",

@@ -86,8 +86,15 @@ function rewriteLinks(content) {
 }
 
 function yamlQuote(value) {
-  // 生成安全的 YAML 双引号标量：转义反斜杠与双引号
-  return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+  // 生成安全的 YAML 双引号标量。
+  // YAML 规范要求双引号标量内必须转义：反斜杠、双引号、换行符（\n）、回车符（\r）。
+  // 当前 extractMeta 逐行处理，title/description 理论上不含换行；
+  // 此处仍做防御性转义，确保未来若源文件出现 CRLF 或异常内容时不会生成破损的 frontmatter。
+  return `"${String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')}"`
 }
 
 function main() {
@@ -116,6 +123,9 @@ function main() {
 
   const quick = generated.find((g) => g.slug === 'quick-start')
   const core = generated.filter((g) => g.slug !== 'quick-start')
+  // 排序策略：在 CORE_ORDER 中出现的文档按其下标排列；
+  // 未列出的新文档（indexOf 返回 -1）统一映射到 MAX_SAFE_INTEGER，
+  // 追加到末尾并按 slug 字典序互相排列，实现「加文档零改动 CORE_ORDER」。
   core.sort((a, b) => {
     const ia = CORE_ORDER.indexOf(a.slug)
     const ib = CORE_ORDER.indexOf(b.slug)

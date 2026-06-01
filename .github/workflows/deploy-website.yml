@@ -8,6 +8,11 @@ on:
       - 'docs/核心功能/**'
   workflow_dispatch:
 
+# 同一分支同时只允许一个部署运行，新触发会取消旧的进行中任务，避免 gh-pages 并发写入冲突。
+concurrency:
+  group: deploy-website-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
