@@ -1,6 +1,6 @@
 ---
 name: harness-enhancer
-description: 对 harness9 项目最新代码改动进行完整质量提升：Code Review、Bug 修复、中文注释完善、单元测试补充、文档同步更新。在完成较大功能实现、修复 Bug 或重构后主动调用。
+description: 对 harness9 项目**整个代码仓库**进行完整质量提升：Code Review、Bug 修复、中文注释完善、单元测试补充、文档同步更新。检查范围是当前磁盘上的全量源文件，与 git 历史或最新改动无关——既可在完成较大功能、修复 Bug、重构后调用，也可对全仓库做周期性全量体检。
 model: sonnet
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---

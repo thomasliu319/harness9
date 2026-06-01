@@ -18,7 +18,7 @@ internal/subagent/
 └── task_tool.go    # TaskTool：主代理调用的唯一委派入口（tools.BaseTool）
 
 cmd/harness9/
-├── main.go         # 接线：注册内置 code-reviewer、LoadFromDir、NewRunner、NewTaskTool
+├── main.go         # 接线：注册内置 general-purpose、LoadFromDir、NewRunner、NewTaskTool
 ├── tui_update.go   # EventSubAgent 渲染 + dispatch() 中 TaskTracker.DrainCompleted 注入 + @agent 直跑 + 任务面板按键
 └── tui_view.go     # renderSubAgentProgress()、renderTaskPanel()、renderStatusBar() 后台任务状态栏
 ```
@@ -27,21 +27,38 @@ cmd/harness9/
 
 ## 子代理定义
 
+### 内置 general-purpose 子代理
+
+harness9 内置了一个 **`general-purpose`（通用）子代理**，设计直接对标两个主流框架的同名能力：
+
+- **Claude Code** 的 [general-purpose subagent](https://code.claude.com/docs/en/sub-agents#general-purpose)：「A capable agent for complex, multi-step tasks that require both exploration and action」，继承主对话的全部工具与模型，是「没有更专门子代理时」的兜底委派目标。
+- **DeepAgents** 的 [general-purpose subagent](https://docs.langchain.com/oss/python/deepagents/subagents#the-general-purpose-subagent)：每个 deep agent 默认都携带，用于「上下文隔离但无需专门行为」的场景——主代理把多步任务整体委派出去，只拿回一份简洁结论，避免中间过程污染主上下文。
+
+两者共同的设计内核被 harness9 完整继承：
+
+| 维度 | general-purpose 的取值 | 含义 |
+|------|----------------------|------|
+| `Tools` | 留空（nil） | **继承父代理全部可用工具**，能读写文件、执行命令、调用 skill |
+| `Model` | 留空（`""`） | **继承父代理模型**，不额外覆盖 |
+| `MaxTurns` | 留空（0） | 继承引擎默认轮数（与主代理一致） |
+| 定位 | 兜底委派目标 | 任务边界清晰、可独立完成、希望隔离上下文时使用 |
+
+**何时委派给它**：任务需要兼顾探索与修改、需要复杂推理来解释中间结果、或包含多个相互依赖的步骤，且你只想要最终结论而非冗长的中间过程。
+
 ### 编程式定义
 
-在 `main.go` 中直接构造并注册到 `subagent.Registry`：
+内置 `general-purpose` 在 `main.go` 中直接构造并注册到 `subagent.Registry`：
 
 ```go
 subAgentReg.Register(subagent.SubAgentDefinition{
-    Name:         "code-reviewer",
-    Description:  "代码审查专家。写完或修改代码后主动使用，检查安全、性能与最佳实践。",
-    SystemPrompt: "你是一名资深代码审查专家。审查时聚焦：安全漏洞、性能问题、可维护性。...",
-    Tools:        []string{"read_file", "bash"},
-    Source:       "builtin", // 不设 MaxTurns，继承默认（= 主代理 agentMaxTurns）
+    Name:         "general-purpose",
+    Description:  "通用子代理，处理需要兼顾探索与修改、复杂推理或多步依赖的任务。当任务边界清晰、可独立完成、且希望隔离上下文（仅回传最终结论而非冗长中间过程）时使用；在没有更专门的子代理可用时，它是默认兜底选择。继承父代理可用的全部工具与模型。",
+    SystemPrompt: generalPurposeSystemPrompt, // 强调「上下文隔离 + 自包含结论」
+    Source:       "builtin", // Tools/Model/MaxTurns 均留空：工具与模型继承父，轮数继承引擎默认
 })
 ```
 
-harness9 内置了一个 `code-reviewer` 子代理，覆盖最常见的代码审查场景。
+> 需要更专门的能力（如安全审计、文档撰写）时，推荐通过下文的**文件式定义**新增子代理，而非堆叠更多编程式内置——保持内核精简，专门角色交给项目侧定义。
 
 ### SubAgentDefinition 字段说明
 
@@ -111,8 +128,8 @@ skills: security-review
 ```
 把一个边界清晰的任务委派给专门的子代理执行。子代理拥有独立上下文与受限工具集。
 可用子代理：
-- code-reviewer: 代码审查专家。写完或修改代码后主动使用，检查安全、性能与最佳实践。
-- security-auditor: 安全审计专家。...
+- general-purpose: 通用子代理，处理需要兼顾探索与修改、复杂推理或多步依赖的任务。当任务边界清晰、可独立完成、且希望隔离上下文时使用；没有更专门的子代理时它是默认兜底选择。继承父代理可用的全部工具与模型。
+- security-auditor: 安全审计专家。...（文件式定义）
 ```
 
 ### 前台执行（`background=false`，默认）
@@ -139,7 +156,7 @@ Runner.Run(..., background=false)
 task 工具调用
     │
     ▼
-task 工具立即返回 <task id="task-code-reviewer-1" state="running"/>
+task 工具立即返回 <task id="task-general-purpose-1" state="running"/>
     │
     ▼ 同时：go func(){...}()
         execCtx 从会话级 baseCtx 派生（独立于父 turn，不受工具 60s 超时影响）
@@ -193,13 +210,13 @@ task 工具立即返回 <task id="task-code-reviewer-1" state="running"/>
 前台子代理执行期间，TUI 在工具进度区下方实时追加 `[agent-name]` 前缀的暗青色进度行：
 
 ```
-  [code-reviewer] 子代理启动…
-  [code-reviewer] ▸ read_file
-  [code-reviewer]   ✓
-  [code-reviewer] ▸ bash
-  [code-reviewer]   ✓
-  [code-reviewer] 发现 3 处安全问题，已列出...
-  [code-reviewer] ✓ 完成
+  [general-purpose] 子代理启动…
+  [general-purpose] ▸ read_file
+  [general-purpose]   ✓
+  [general-purpose] ▸ bash
+  [general-purpose]   ✓
+  [general-purpose] 已定位问题根因，正在汇总结论...
+  [general-purpose] ✓ 完成
 ```
 
 进度行最多保留最近 `maxSubAgentLines = 12` 行，防止长时间运行的子代理无界增长。`SubAgentThinking`（推理增量）故意不展示，减少噪声。
@@ -295,7 +312,7 @@ task 工具立即返回 <task id="task-code-reviewer-1" state="running"/>
 按 `Enter` 选中任务后进入详情视图，展示该后台子代理的全过程日志（通过 `TaskTracker.Get(id)` 取 `TaskDetail.Log` 深拷贝）：
 
 ```
-code-reviewer — 完成  （↑↓ 滚动，Esc 返回）
+general-purpose — 完成  （↑↓ 滚动，Esc 返回）
 
 启动…
 ▸ read_file(main.go)
@@ -328,12 +345,12 @@ code-reviewer — 完成  （↑↓ 滚动，Esc 返回）
 在输入框中以 `@<agent> <task>` 格式发送，**绕过主 LLM 的工具决策**，直接前台调用指定子代理：
 
 ```
-@code-reviewer 审查 internal/tools/bash.go 的安全性
+@general-purpose 调查 internal/tools/bash.go 的超时处理逻辑并总结实现要点
 ```
 
 发送后：
-1. TUI 立即追加用户消息行（`▶ You: @code-reviewer …`）
-2. 子代理名称行（`◆ code-reviewer:`）追加到 scrollback
+1. TUI 立即追加用户消息行（`▶ You: @general-purpose …`）
+2. 子代理名称行（`◆ general-purpose:`）追加到 scrollback
 3. `running = true`，输入框禁用
 4. 子代理流式进度实时渲染到 `subAgentLines`（与 `task` 工具前台执行完全相同的渲染路径）
 5. 完成后，最终文本直接追加到 scrollback（作为 assistant 消息落入对话），`running = false`，输入框恢复
@@ -343,7 +360,7 @@ code-reviewer — 完成  （↑↓ 滚动，Esc 返回）
 在输入框键入 `@` 后按 `Tab`，自动补全已注册的子代理名：
 
 ```
-@cod[Tab] → @code-reviewer 
+@gen[Tab] → @general-purpose 
 ```
 
 补全逻辑在 `cycleCompletion()` 中处理，以 `@` 守卫与 `/` 斜杠命令补全并列，共享同一套 `typedPrefix / completions / completionIdx` 循环状态，多次 `Tab` 可在所有匹配名称中循环。
@@ -356,7 +373,7 @@ code-reviewer — 完成  （↑↓ 滚动，Esc 返回）
 
 `@` 语法**仅支持前台执行**（`background=false`）。
 
-需要后台执行时，通过自然语言向主代理表达意图（如「在后台用 code-reviewer 检查一下最新提交」），由主 LLM 决策调用 `task` 工具并附 `background=true`，结果出现在 `/tasks` 面板。
+需要后台执行时，通过自然语言向主代理表达意图（如「在后台用 general-purpose 检查一下最新提交」），由主 LLM 决策调用 `task` 工具并附 `background=true`，结果出现在 `/tasks` 面板。
 
 | 维度 | `@agent task`（前台直跑） | 主 LLM → `task(background=true)` |
 |------|--------------------------|-----------------------------------|
@@ -423,11 +440,11 @@ subAgentBaseTools := []tools.BaseTool{
     skills.NewUseSkillTool(skillsIndex),
 }
 
-// 2. 定义注册表：先注册内置，再加载文件式定义
+// 2. 定义注册表：先注册内置 general-purpose，再加载文件式定义
 subAgentReg := subagent.NewRegistry()
 subAgentReg.Register(subagent.SubAgentDefinition{
-    Name: "code-reviewer", Description: "...", SystemPrompt: "...",
-    Tools: []string{"read_file", "bash"}, Source: "builtin",
+    Name: "general-purpose", Description: "通用子代理…", SystemPrompt: generalPurposeSystemPrompt,
+    Source: "builtin", // Tools/Model 留空 → 继承父代理可用的全部工具与模型
 })
 subAgentReg.LoadFromDir(filepath.Join(workDir, ".harness9", "agents"))
 

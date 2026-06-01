@@ -24,7 +24,7 @@ const (
 // SubAgentUpdate 是子代理运行过程向上层（TUI）转发的一次进度更新。
 // 由 Runner 在消费子引擎事件流时生成，经 hooks.SubAgentProgressFunc 透传。
 type SubAgentUpdate struct {
-	// AgentName 子代理类型名称（如 "code-reviewer"）。
+	// AgentName 子代理类型名称（如 "general-purpose"）。
 	AgentName string `json:"agent_name"`
 	// Kind 更新的语义类型。
 	Kind SubAgentUpdateKind `json:"kind"`

@@ -206,6 +206,27 @@ updated: 2026-05-22T15:30:00+08:00
 
 详见 [文件系统能力技术方案](docs/核心功能/file-system.md)。
 
+### Sub-Agent（子代理委派）
+
+主代理可通过 `task` 工具，把**边界清晰的子任务**委派给运行在独立上下文、受限工具集的专门子代理执行——子代理只回传最终结论，不让冗长的中间过程污染主上下文。
+
+harness9 内置一个 **`general-purpose`（通用）子代理**，设计对标 [Claude Code](https://code.claude.com/docs/en/sub-agents#general-purpose) 与 [DeepAgents](https://docs.langchain.com/oss/python/deepagents/subagents#the-general-purpose-subagent) 的同名能力：继承父代理可用的全部工具与模型，用于需要兼顾探索与修改、复杂推理或多步依赖的任务，是「没有更专门子代理时」的兜底委派目标。
+
+```
+@general-purpose 调查 internal/tools/bash.go 的超时处理逻辑并总结实现要点
+  [general-purpose] 子代理启动…
+  [general-purpose] ▸ read_file ✓
+  [general-purpose] ✓ 完成
+```
+
+- **内置 general-purpose**：`Tools`/`Model` 留空即继承父代理可用的全部工具与模型，开箱即用
+- **文件式扩展**：在 `.harness9/agents/*.md` 用 YAML frontmatter 定义专门子代理（白名单/黑名单工具、模型覆盖、预加载 Skills）
+- **前台 / 后台双模式**：前台阻塞返回结果，后台异步执行 + `/tasks` 面板查看 + 下次对话注入
+- **`@agent` 直跑**：输入 `@<agent> <task>` 绕过主 LLM 决策，直接前台调用（`Tab` 补全子代理名）
+- **安全隔离**：禁止递归（子代理无 `task` 工具）、权限只能更严不能扩权、上下文完全隔离
+
+详见 [Sub-Agent 系统实现原理](docs/核心功能/sub-agent.md)。
+
 ### 标准 ReAct 循环
 
 每个 Turn 执行一次 LLM 调用（携带完整工具列表），工具结果作为 Observation 注入上下文，驱动下一轮推理：
@@ -256,6 +277,7 @@ for evt := range stream {
 | **Engine**     | 标准 ReAct 主循环，阻塞 + 流式双模式，EventTokenUpdate / EventCompaction / EventToolResult（精确耗时）事件   | ✅   |
 | **Hooks**      | 工具拦截器：HookRegistry（洋葱模型）+ OffloadHook（超大输出 offload）+ FilePlanWriter（计划持久化）+ DangerHook（高危命令拦截）| ✅   |
 | **Permission** | Human-in-the-Loop 权限控制：PermissionHook（JSON 规则）+ 审批对话框（5 选项）+ 白名单动态更新 + 敏感路径硬保护        | ✅   |
+| **Sub-Agent**  | 子代理委派：内置 general-purpose 通用子代理、文件式定义（`.harness9/agents/*.md`）、task 工具（前台/后台）、`@agent` 直跑、TaskTracker、上下文隔离 + 防递归 + 权限不扩权 | ✅   |
 | **Planning**   | Plan Mode（先规划后执行）、TodoStore、todo_write 工具、PlanWriter 接口、工具层权限过滤、自动续跑 + 停滞检测           | ✅   |
 | **Memory**     | SQLiteSession（WAL）、Manager（WithToolResultsDir + DeleteSession GC）、SummarizationCompactor（默认，LLM 摘要）、TokenBudgetCompactor（回退） | ✅   |
 | **Context**    | System Prompt 结构化组装（基础 + AGENTS.md + Skills 索引 + todo 指引 + offload 检索指引）                | ✅   |
@@ -283,6 +305,7 @@ harness9/
 ├── internal/
 │   ├── engine/              # ReAct 主循环（Run + RunStream + ToolResultData）
 │   ├── hooks/               # 工具拦截器（OffloadHook + FilePlanWriter + HookRegistry）
+│   ├── subagent/            # Sub-Agent：定义/注册表/Runner/task 工具/TaskTracker
 │   ├── planning/            # PlanMode 枚举 + TodoStore + PlanWriter 接口
 │   ├── memory/              # Session 持久化 + Compactor 压缩策略 + DeleteSession GC
 │   ├── provider/            # OpenAI / Anthropic 适配器 + 模型限制注册表
@@ -312,6 +335,7 @@ harness9/
 | [Agent Loop 核心实现原理](docs/核心功能/agent-loop.md)                 | 标准 ReAct 设计原理、PromptBuilder、流式架构                        |
 | [Tool Calling 工具调用系统](docs/核心功能/tool-calling.md)             | 工具接口、并发模型、内置工具详解、扩展指南                                   |
 | [Context Engineering 技术方案](docs/核心功能/context-engineering.md) | SQLiteSession、SummarizationCompactor、Token 估算、并发安全设计    |
+| [Sub-Agent 系统实现原理](docs/核心功能/sub-agent.md)                     | 内置 general-purpose 子代理、文件式定义、task 工具、前台/后台执行、@agent 直跑、TaskTracker、安全隔离 |
 | [Planning 模块实现原理](docs/核心功能/planning.md)                      | Plan Mode、TodoStore、工具层权限控制、自动续跑、停滞检测、跨会话持久化            |
 | [文件系统能力技术方案](docs/核心功能/file-system.md)                         | OffloadHook、FilePlanWriter、read_file 分页、Session GC、Hooks 扩展 |
 | [Shell 执行功能技术方案](docs/核心功能/shell-execution.md)                   | `!` 前缀触发、异步执行机制、LLM 上下文注入、截断策略、交互式命令拦截          |
