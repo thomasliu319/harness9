@@ -41,7 +41,13 @@ function toSlug(filename) {
 function extractMeta(content) {
   const lines = content.split('\n')
   let title = ''
+  let titleInFence = false
   for (const line of lines) {
+    if (line.trim().startsWith('```')) {
+      titleInFence = !titleInFence
+      continue
+    }
+    if (titleInFence) continue
     const m = line.match(/^#\s+(.+?)\s*$/)
     if (m) {
       title = m[1].trim()
@@ -57,7 +63,9 @@ function extractMeta(content) {
       continue
     }
     if (inFence || !t) continue
-    if (/^([#>|\-*]|\d+\.)/.test(t)) continue // 跳过标题/引用/表格/有序与无序列表行
+    // 跳过标题/引用/表格/有序与无序列表行；列表标记要求其后跟空格，
+    // 避免误跳过以 **加粗** 等行内标记开头的正文段落
+    if (/^(#{1,6}\s|>|\||[-*+]\s|\d+\.\s)/.test(t)) continue
     description = t
       .replace(/`([^`]*)`/g, '$1')
       .replace(/\*\*?([^*]*)\*\*?/g, '$1')
@@ -87,6 +95,8 @@ function main() {
     console.error(`[sync-docs] 源目录不存在: ${sourceDir}`)
     process.exit(1)
   }
+  // 生成前清空旧的生成页，避免源文档重命名/删除后本地残留孤儿页面
+  fs.rmSync(websiteDocsDir, { recursive: true, force: true })
   fs.mkdirSync(websiteDocsDir, { recursive: true })
 
   const files = fs.readdirSync(sourceDir).filter((f) => f.endsWith('.md'))
