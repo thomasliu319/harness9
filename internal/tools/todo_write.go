@@ -53,8 +53,10 @@ func NewTodoWriteTool(store *planning.TodoStore, opts ...TodoWriteOption) *TodoW
 	return t
 }
 
+// Name 返回工具标识符 "todo_write"。
 func (t *TodoWriteTool) Name() string { return "todo_write" }
 
+// Definition 返回工具元信息，包含描述和 JSON Schema 参数定义。
 func (t *TodoWriteTool) Definition() schema.ToolDefinition {
 	return schema.ToolDefinition{
 		Name: "todo_write",

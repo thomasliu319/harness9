@@ -1,3 +1,7 @@
+// Package subagent — promptBuilder：子代理 system prompt 组装器。
+// 本文件实现 promptBuilder，组合子代理 system prompt、预加载 skill 正文和工作目录信息。
+// 通过结构类型（Structural Typing）隐式满足 engine.PromptBuilder 接口，无需显式 import engine 包，
+// 避免循环依赖（subagent 依赖 engine，engine 不反向依赖 subagent）。
 package subagent
 
 import (

@@ -1,3 +1,7 @@
+// Package skills — Index：已加载 skill 的集合与按需全文读取。
+// 本文件实现 Index，持有所有已解析 Skill 的元数据（名称、描述、触发词），
+// 提供 Summary（注入 System Prompt 的索引摘要）和 GetFullContent（懒加载 skill 全文）。
+// 遵循 Progressive Disclosure 原则：启动时只加载索引，正文在 LLM 调用 use_skill 时按需读取。
 package skills
 
 import (

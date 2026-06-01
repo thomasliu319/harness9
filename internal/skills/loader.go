@@ -1,3 +1,7 @@
+// Package skills — LoadSkills：从文件系统扫描并初始化 Skills Index。
+// 本文件实现 LoadSkills，扫描 skillsDir 下各子目录中的 SKILL.md 文件，
+// 解析 YAML frontmatter 提取元数据，构建并返回 *Index。
+// 目录不存在时静默返回空 Index，保证零配置可运行。
 package skills
 
 import (

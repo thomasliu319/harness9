@@ -1,3 +1,8 @@
+// Package subagent — TaskTracker：后台子代理任务的线程安全单一事实源。
+// 本文件实现 TaskTracker，管理后台（background=true）子代理任务的完整生命周期。
+// 写入路径（Start/AppendLog/Finish）来自后台 goroutine；
+// 读取路径（List/Get/DrainCompleted/RunningCount）来自 TUI goroutine。
+// 所有操作均通过 sync.Mutex 保护，不使用 channel，避免 send-on-closed-channel 风险。
 package subagent
 
 import (

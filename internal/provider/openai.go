@@ -201,10 +201,14 @@ func (p *OpenAIProvider) GenerateStream(ctx context.Context, msgs []schema.Messa
 		}
 
 		if err := stream.Err(); err != nil {
-			sendStreamChunk(ctx, ch, schema.StreamChunk{
+			// 流式错误：使用 select 避免 context 取消后 goroutine 永久阻塞在 channel 发送上。
+			select {
+			case <-ctx.Done():
+			case ch <- schema.StreamChunk{
 				Type:  schema.StreamChunkError,
 				Error: fmt.Sprintf("OpenAI 流式错误: %v", err),
-			})
+			}:
+			}
 			return
 		}
 
@@ -214,11 +218,15 @@ func (p *OpenAIProvider) GenerateStream(ctx context.Context, msgs []schema.Messa
 			ToolCalls: toolAccs.finalize(),
 		}
 
-		sendStreamChunk(ctx, ch, schema.StreamChunk{
+		// Done chunk：使用 select 避免 context 取消时阻塞。
+		select {
+		case <-ctx.Done():
+		case ch <- schema.StreamChunk{
 			Type:    schema.StreamChunkDone,
 			Message: msg,
 			Usage:   actualUsage,
-		})
+		}:
+		}
 	}()
 
 	return ch, nil

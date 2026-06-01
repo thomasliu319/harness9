@@ -1,4 +1,8 @@
-// model_limits.go — 模型上下文窗口注册表与限制查询。
+// Package provider — model_limits：已知模型的上下文窗口注册表与限制查询。
+// 本文件维护 knownModels 静态注册表，存储各主流模型的 ContextTokens 和 OutputTokens。
+// GetModelLimits 自动剥离 provider 前缀（如 "openai/gpt-4o" → "gpt-4o"），
+// 未知模型返回 256K 保守回退值（与 HermesAgent 策略一致）。
+// 此注册表是静态的，新模型上线后需手动添加条目。最后更新：2026-05。
 package provider
 
 import "strings"

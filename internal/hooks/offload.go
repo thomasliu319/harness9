@@ -1,3 +1,7 @@
+// Package hooks — OffloadHook：超大工具输出 offload 到文件系统。
+// 本文件实现 OffloadHook，当工具输出超过阈值时将完整内容写入 workDir/.harness9/tool_results/
+// 子目录，并在 context 中替换为含路径引用和预览行数的摘要消息，防止 LLM 上下文窗口膨胀。
+// 设计为 fail-open：文件写入失败时原样返回原始结果，不中断 agent loop。
 package hooks
 
 import (

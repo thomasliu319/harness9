@@ -1,3 +1,18 @@
+// TUI Update 层：处理所有 Bubbletea 消息，驱动 tuiModel 状态机。
+//
+// Update 层是 Bubbletea Elm 架构的逻辑侧，所有状态变更均在此层完成。
+// 主要消息类型及处理分支：
+//
+//   - tea.KeyMsg         — 键盘输入（Ctrl+C/D 退出、Enter 提交、Tab 补全、ShiftTab 模式切换等）
+//   - eventMsg           — 引擎 Event（handleEvent 分发各 EventType）
+//   - shellResultMsg     — Shell 命令异步执行结果
+//   - subAgentNotifyMsg  — 后台子代理完成通知
+//   - subAgentDirectMsg  — @agent 前台直跑进度/完成
+//   - spinner.TickMsg    — Spinner 动词轮换 tick
+//   - tea.WindowSizeMsg  — 终端尺寸变化
+//   - tea.MouseMsg       — 鼠标滚轮
+//
+// dispatch()：在此文件中实现的 RunStream 触发入口，管理 eventCh 生命周期。
 package main
 
 import (

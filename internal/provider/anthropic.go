@@ -219,10 +219,16 @@ func (p *AnthropicProvider) GenerateStream(ctx context.Context, msgs []schema.Me
 		}
 
 		if err := stream.Err(); err != nil {
-			sendStreamChunk(ctx, ch, schema.StreamChunk{
+			// 流式错误：使用直接 channel 发送而非 sendStreamChunk，确保消费方一定能收到错误通知。
+			// goroutine 已运行到流末尾，若 context 已取消则消费方早已停止读取，发送无意义。
+			// 此处 select 避免 goroutine 在已取消 context 下永久阻塞在 channel 发送上。
+			select {
+			case <-ctx.Done():
+			case ch <- schema.StreamChunk{
 				Type:  schema.StreamChunkError,
 				Error: fmt.Sprintf("Anthropic 流式错误: %v", err),
-			})
+			}:
+			}
 			return
 		}
 
@@ -232,11 +238,15 @@ func (p *AnthropicProvider) GenerateStream(ctx context.Context, msgs []schema.Me
 			ToolCalls: toolAccs.finalize(),
 		}
 
-		sendStreamChunk(ctx, ch, schema.StreamChunk{
+		// Done chunk：同样使用 select 避免 context 取消时阻塞。
+		select {
+		case <-ctx.Done():
+		case ch <- schema.StreamChunk{
 			Type:    schema.StreamChunkDone,
 			Message: msg,
 			Usage:   actualUsage,
-		})
+		}:
+		}
 	}()
 
 	return ch, nil

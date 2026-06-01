@@ -1,3 +1,10 @@
+// Package subagent — TaskTool：主代理委派子任务的 task 工具。
+// 本文件实现 TaskTool（工具名 "task"），允许主代理通过 LLM ToolCall 将边界清晰的子任务
+// 委派给已注册的子代理执行。支持前台阻塞（background=false）和后台异步（background=true）两种模式：
+//   - 前台：阻塞当前 Turn，消费子代理事件流，最终回传完整结论文本
+//   - 后台：立即返回 task id，子代理在后台 goroutine 中运行，结果经 TaskTracker 注入后续 Turn
+//
+// 安全保障：denyTaskHook 在子代理工具注册表层面强制禁止递归委派（task 工具永不出现在子代理工具集中）。
 package subagent
 
 import (

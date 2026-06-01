@@ -1,3 +1,7 @@
+// Package subagent — Registry：子代理定义注册表。
+// 本文件实现 Registry，持有所有已注册子代理定义（SubAgentDefinition）的集合。
+// 约定：启动阶段一次性注册（Register/LoadFromDir），运行期只读（List/Get），
+// 因此无需加锁，与 tools.Registry 的使用约定一致。
 package subagent
 
 import (

@@ -1,3 +1,7 @@
+// Package subagent — loader：从目录扫描文件式子代理定义并注册。
+// 本文件实现 Registry.LoadFromDir，扫描 dir（通常为 workDir/.harness9/agents/）下的 *.md 文件，
+// 逐一解析为 SubAgentDefinition 并注册。目录不存在时静默返回，保证零配置可运行。
+// 文件定义覆盖同名编程式定义（如内置 general-purpose），便于项目级自定义覆盖内置行为。
 package subagent
 
 import (

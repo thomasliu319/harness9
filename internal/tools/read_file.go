@@ -34,8 +34,10 @@ func NewReadFileTool(workDir string) *ReadFileTool {
 	return &ReadFileTool{workDir: filepath.Clean(workDir)}
 }
 
+// Name 返回工具标识符 "read_file"。
 func (t *ReadFileTool) Name() string { return "read_file" }
 
+// Definition 返回工具元信息，包含描述和 JSON Schema 参数定义。
 func (t *ReadFileTool) Definition() schema.ToolDefinition {
 	return schema.ToolDefinition{
 		Name:        t.Name(),

@@ -106,7 +106,7 @@ internal/provider/
 ### 4.1 Session 接口
 
 ```go
-// Session 管理单个会话的消息历史。
+// Session 管理单个会话的消息历史与规划状态。
 type Session interface {
     SessionID() string
     // GetMessages 返回历史消息；limit=0 返回全部，limit>0 返回最近 limit 条。
@@ -117,6 +117,10 @@ type Session interface {
     PopMessage(ctx context.Context) (*schema.Message, error)
     // Clear 清空会话历史。
     Clear(ctx context.Context) error
+    // GetTodos 返回该会话已持久化的任务列表。无任务时返回 nil, nil。
+    GetTodos(ctx context.Context) ([]planning.TodoItem, error)
+    // SaveTodos 原子性保存任务列表（write-replace 语义）。
+    SaveTodos(ctx context.Context, items []planning.TodoItem) error
 }
 ```
 
@@ -132,9 +136,12 @@ type Compactor interface {
 ### 4.3 Manager
 
 ```go
-type Manager struct{ db *sql.DB }
+type Manager struct{ db *sql.DB; toolResultsDir string }
 
-func NewManager(dbPath string) (*Manager, error)
+// NewManager 打开（或创建）SQLite 数据库，初始化 Schema，支持可选配置。
+func NewManager(dbPath string, opts ...ManagerOption) (*Manager, error)
+// WithToolResultsDir 设置 offload 文件根目录；DeleteSession 会级联清理对应子目录。
+func WithToolResultsDir(dir string) ManagerOption
 func (m *Manager) NewSession(ctx context.Context) (Session, error)
 func (m *Manager) OpenSession(ctx context.Context, id string) (Session, error)
 func (m *Manager) ListSessions(ctx context.Context) ([]SessionInfo, error)

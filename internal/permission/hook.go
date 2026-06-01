@@ -1,3 +1,7 @@
+// Package permission — PermissionHook：基于 JSON 配置规则的工具执行权限拦截器。
+// 本文件实现 Hook（permission.Hook），将 Rules 封装为 hooks.ToolHook 接口。
+// NewFileHook 每次 BeforeExecute 时从磁盘重新加载规则文件，确保 TUI "总是允许"
+// 动态更新白名单后在下次工具调用时立即生效，无需重启进程。
 package permission
 
 import (

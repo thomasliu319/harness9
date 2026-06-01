@@ -1,3 +1,7 @@
+// TUI upgrade 子命令：harness9 自动升级。
+// 本文件实现 RunUpgrade，通过 GitHub Releases API 获取最新版本信息，
+// 下载对应平台的 tarball，SHA256 校验后原子替换当前二进制文件。
+// 通过 goreleaser ldflags 注入的 version 变量比较版本，已是最新时直接返回。
 package main
 
 import (

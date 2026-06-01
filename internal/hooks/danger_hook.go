@@ -1,3 +1,7 @@
+// Package hooks — DangerHook：危险命令模式检测拦截器。
+// 本文件实现 DangerHook，在 bash 工具执行前扫描命令是否匹配预置的高危模式列表。
+// 命中时返回 HookActionAsk，触发 TUI 审批对话框；未命中则直接放行。
+// 内置 19 条高危模式，分高风险（rm -rf、管道执行脚本等）和中风险（sudo、chmod 777 等）两级。
 package hooks
 
 import (

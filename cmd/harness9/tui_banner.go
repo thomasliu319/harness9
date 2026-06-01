@@ -1,3 +1,5 @@
+// TUI Banner：欢迎页 ASCII Art 渲染。
+// 本文件实现 bannerContent，根据终端宽度居中输出 HARNESS9 ASCII Art 和快捷键提示行。
 package main
 
 import (

@@ -1,4 +1,6 @@
 // Package memory 提供 harness9 的短期记忆管理：会话历史持久化与上下文压缩。
+// 本文件定义 Compactor 接口和三种实现：SlidingWindowCompactor（滑动窗口）、
+// TokenBudgetCompactor（token 预算）和辅助的 repairOrphanedToolPairs 修复函数。
 package memory
 
 import "github.com/harness9/internal/schema"

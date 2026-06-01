@@ -1,3 +1,6 @@
+// Package memory — SummarizationCompactor：LLM 摘要压缩策略。
+// 本文件实现基于 LLM 调用的摘要压缩器，是 harness9 默认的上下文压缩策略（优于纯截断）。
+// 相关类型：Summarizer 接口（使用者侧定义）、TodoInjector 接口、SummarizationCompactor。
 package memory
 
 import (

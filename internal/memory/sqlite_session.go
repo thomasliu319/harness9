@@ -1,3 +1,8 @@
+// Package memory — SQLiteSession：会话消息和 todos 的 SQLite 持久化实现。
+// 本文件实现 SQLiteSession，通过共享的 *sql.DB 连接（Manager 持有）执行 SQLite 操作。
+// 写入操作（AddMessages、SaveTodos）使用显式事务（BEGIN/COMMIT）保证原子性。
+// defer tx.Rollback() 配合 //nolint:errcheck 确保任何错误路径都能回滚事务，
+// 避免 SQLite 连接进入错误状态。
 package memory
 
 import (

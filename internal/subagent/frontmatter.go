@@ -1,3 +1,7 @@
+// Package subagent — frontmatter：agent Markdown 文件解析器。
+// 本文件实现 parseAgentFile，解析 .harness9/agents/*.md 文件中的 YAML frontmatter，
+// 提取子代理定义字段（name、description、tools 等），正文作为 SystemPrompt。
+// 解析逻辑与 skills.parseFrontmatter 相似，但字段集合不同，故各自独立实现。
 package subagent
 
 import (

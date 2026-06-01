@@ -8,7 +8,9 @@ import (
 	"github.com/harness9/internal/schema"
 )
 
-// MemorySession 是 Session 的纯内存实现，仅用于测试。
+// MemorySession 是 Session 的纯内存实现，使用 sync.Mutex 保证线程安全。
+// 主要用于测试，同时也被 subagent.Runner 用于子代理的隔离会话（子代理会话不需要持久化，
+// 独立 context 结束后即丢弃，无需写入 SQLite）。
 type MemorySession struct {
 	mu   sync.Mutex
 	id   string
