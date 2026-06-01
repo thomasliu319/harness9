@@ -25,6 +25,7 @@ export default defineConfig({
           items: [
             { text: '所有文章', link: '/blog/' },
             { text: 'Agent Loop — 500 行 Go 代码驱动的生产级 ReAct 主循环', link: '/blog/agent-loop/' },
+            { text: '工具调用系统 — 从接口契约到并发沙箱的工程实践', link: '/blog/tool-calling/' },
           ],
         },
       ],
