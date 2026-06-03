@@ -29,6 +29,7 @@ import (
 	"github.com/harness9/internal/env"
 	"github.com/harness9/internal/hooks"
 	"github.com/harness9/internal/logfmt"
+	"github.com/harness9/internal/ltm"
 	"github.com/harness9/internal/memory"
 	"github.com/harness9/internal/permission"
 	"github.com/harness9/internal/planning"
@@ -148,6 +149,25 @@ Flags:
 		log.Fatal(logfmt.FormatMsg("main", fmt.Sprintf("创建会话失败: %v", err)))
 	}
 
+	// ---- Long-Term Memory 接线 ----
+	// 复用 Manager 的 SQLite 连接，初始化长期记忆 Store 与 MEMORY.md 物化视图。
+	ltmStore, err := ltm.NewStore(mgr.DB())
+	if err != nil {
+		log.Fatal(logfmt.FormatMsg("main", fmt.Sprintf("初始化长期记忆 Store 失败: %v", err)))
+	}
+	memoryFilePath := filepath.Join(homeDir, ".harness9", "memories", "MEMORY.md")
+	ltmPrecis := ltm.NewPrecis(ltmStore, memoryFilePath, 5120)
+	// 启动时回收过期记忆并重建一次精华（fail-soft）。
+	if _, err := ltmStore.PurgeExpired(ctx); err != nil {
+		log.Print(logfmt.FormatMsg("main", fmt.Sprintf("回收过期记忆失败: %v", err)))
+	}
+	if err := ltmPrecis.Regenerate(ctx); err != nil {
+		log.Print(logfmt.FormatMsg("main", fmt.Sprintf("重建记忆精华失败: %v", err)))
+	}
+	ltmContent, _ := ltmPrecis.Read()
+	promptBuilder = promptBuilder.WithLongTermMemory(ltmContent)
+	// ---- Long-Term Memory 接线（续：工具注册见下）----
+
 	registry := tools.NewRegistry()
 	todoStore := planning.NewTodoStore()
 	planWriter, err := hooks.NewFilePlanWriter(workDir, homeDir, sess.SessionID())
@@ -161,6 +181,8 @@ Flags:
 		tools.NewEditFileTool(workDir),
 		skills.NewUseSkillTool(skillsIndex),
 		tools.NewTodoWriteTool(todoStore, tools.WithPlanWriter(planWriter)),
+		tools.NewMemoryWriteTool(ltmStore, ltmPrecis),
+		tools.NewMemorySearchTool(ltmStore),
 	} {
 		if err := registry.Register(tool); err != nil {
 			log.Fatal(logfmt.FormatMsg("main", fmt.Sprintf("注册工具 %s 失败: %v", tool.Name(), err)))
@@ -245,8 +267,10 @@ Flags:
 	hookReg := hooks.NewHookRegistry(registry, permHook, dangerHook, offloadHook)
 
 	// SummarizationCompactor 使用同一 LLM 生成摘要，内置 TokenBudgetCompactor 作为错误回退。
+	// 注入长期记忆 Extractor：压缩前从 head 消息提取持久事实（fail-open）。
 	compactor := memory.NewSummarizationCompactor(llm, modelLimits.ContextTokens,
 		memory.WithTodoInjector(todoStore),
+		memory.WithMemoryExtractor(ltm.NewExtractor(llm, ltmStore)),
 	)
 
 	eng := engine.NewAgentEngine(llm, hookReg, workDir,
@@ -256,6 +280,7 @@ Flags:
 		engine.WithContextWindow(modelLimits.ContextTokens),
 		engine.WithTodoStore(todoStore),
 		engine.WithMaxTurns(agentMaxTurns),
+		engine.WithMemoryNudge(10, "如果本轮对话中出现了值得跨会话长期保留的信息（用户偏好、稳定的项目知识、关键决策、可复用技能），请调用 memory_write 工具记录；否则忽略此提示。"),
 	)
 
 	if term.IsTerminal(os.Stdin.Fd()) {
