@@ -183,3 +183,18 @@ func TestManager_DeleteSession_NoToolResultsDir_NoError(t *testing.T) {
 		t.Fatalf("DeleteSession without toolResultsDir should not error: %v", err)
 	}
 }
+
+func TestManagerDBAccessor(t *testing.T) {
+	dir := t.TempDir()
+	mgr, err := memory.NewManager(filepath.Join(dir, "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	if mgr.DB() == nil {
+		t.Fatal("DB() 应返回非 nil 连接")
+	}
+	if err := mgr.DB().Ping(); err != nil {
+		t.Errorf("DB() 连接应可用: %v", err)
+	}
+}

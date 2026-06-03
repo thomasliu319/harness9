@@ -166,6 +166,12 @@ func (m *Manager) Close() error {
 	return m.db.Close()
 }
 
+// DB 返回底层 SQLite 连接，供长期记忆（ltm.Store）等共享同一连接复用。
+// 调用方不得关闭该连接——其生命周期由 Manager.Close 统一管理。
+func (m *Manager) DB() *sql.DB {
+	return m.db
+}
+
 // newUUID 生成随机 UUID v4。
 func newUUID() string {
 	var b [16]byte
