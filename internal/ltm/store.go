@@ -215,6 +215,57 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]*Entry, 
 	return result, nil
 }
 
+// Update 按 e.ID 更新标题/内容/分类/重要度/TTL/标签，重算签名并刷新 updated_at，
+// 同步重建该条目的 FTS 索引。条目不存在时返回错误。
+func (s *Store) Update(ctx context.Context, e *Entry) error {
+	sig := Signature(e.Content)
+	now := s.now().Unix()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开启事务: %w", err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE long_term_memories
+		 SET title = ?, content = ?, category = ?, importance = ?, signature = ?, ttl_days = ?, tags = ?, updated_at = ?
+		 WHERE id = ?`,
+		e.Title, e.Content, string(e.Category), e.Importance, sig, nullTTL(e.TTLDays), marshalTags(e.Tags), now, e.ID)
+	if err != nil {
+		return fmt.Errorf("更新记忆: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("记忆不存在: %s", e.ID)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM memories_fts WHERE id = ?`, e.ID); err != nil {
+		return fmt.Errorf("清理 fts: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO memories_fts (id, title, content) VALUES (?, ?, ?)`, e.ID, e.Title, e.Content); err != nil {
+		return fmt.Errorf("重建 fts: %w", err)
+	}
+	return tx.Commit()
+}
+
+// SoftDelete 将条目标记为 disabled（不物理删除，保留审计），并移出 FTS 索引。
+// 同时将 signature 置为 NULL，释放唯一约束槽位，使相同内容可在未来重新被添加。
+func (s *Store) SoftDelete(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开启事务: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE long_term_memories SET disabled = 1, signature = NULL, updated_at = ? WHERE id = ?`, s.now().Unix(), id); err != nil {
+		return fmt.Errorf("软删除: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM memories_fts WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("清理 fts: %w", err)
+	}
+	return tx.Commit()
+}
+
 // Get 按 ID 返回条目（含已软删除的，便于审计）。不存在时返回错误。
 func (s *Store) Get(ctx context.Context, id string) (*Entry, error) {
 	row := s.db.QueryRowContext(ctx,
