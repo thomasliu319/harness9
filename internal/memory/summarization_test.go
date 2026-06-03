@@ -406,3 +406,44 @@ func TestSummarizationCompactor_NilInjector_NoChange(t *testing.T) {
 		}
 	}
 }
+
+// stubSummarizer 是 memory.Summarizer 接口的简单固定响应桩，供 Task 8 测试使用。
+type stubSummarizer struct{ text string }
+
+func (s stubSummarizer) Generate(_ context.Context, _ []schema.Message, _ []schema.ToolDefinition) (*schema.Message, *schema.Usage, error) {
+	return &schema.Message{Role: schema.RoleAssistant, Content: s.text}, nil, nil
+}
+
+func newStubSummarizer(text string) stubSummarizer { return stubSummarizer{text: text} }
+
+// recordingExtractor 记录 Extract 是否被调用及收到的消息数。
+type recordingExtractor struct {
+	called bool
+	count  int
+}
+
+func (r *recordingExtractor) Extract(msgs []schema.Message) {
+	r.called = true
+	r.count = len(msgs)
+}
+
+func TestCompactInvokesExtractorBeforeSummarize(t *testing.T) {
+	// 构造一个超出预算、需要压缩的历史。
+	msgs := []schema.Message{{Role: schema.RoleSystem, Content: "sys"}}
+	for i := 0; i < 20; i++ {
+		msgs = append(msgs, schema.Message{Role: schema.RoleUser, Content: strings.Repeat("x", 2000)})
+	}
+	rec := &recordingExtractor{}
+	c := memory.NewSummarizationCompactor(
+		newStubSummarizer("摘要内容"),
+		1000,
+		memory.WithMemoryExtractor(rec),
+	)
+	c.Compact(msgs)
+	if !rec.called {
+		t.Fatal("压缩时应调用 extractor.Extract")
+	}
+	if rec.count == 0 {
+		t.Error("extractor 应收到 head 消息")
+	}
+}

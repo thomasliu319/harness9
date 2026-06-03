@@ -24,6 +24,12 @@ type TodoInjector interface {
 	FormatForInjection() string
 }
 
+// MemoryExtractor 由 ltm.Extractor 实现，在上下文压缩前从即将被摘要的消息中
+// 提取持久事实写入长期记忆。定义在 memory 包（使用者侧），避免 memory 依赖 ltm。
+type MemoryExtractor interface {
+	Extract(msgs []schema.Message)
+}
+
 const (
 	// summaryMarker 用于标识摘要消息，支持在下次压缩时识别并增量更新。
 	summaryMarker = "[Conversation Summary]"
@@ -66,6 +72,8 @@ type SummarizationCompactor struct {
 	Fallback Compactor
 	// TodoInjector 若非 nil，在每次摘要末尾注入活跃任务列表。
 	TodoInjector TodoInjector
+	// extractor 若非 nil，在压缩摘要前从 head 消息中提取长期记忆（fail-open）。
+	extractor MemoryExtractor
 }
 
 // CompactorOption 是 NewSummarizationCompactor 的函数选项。
@@ -74,6 +82,11 @@ type CompactorOption func(*SummarizationCompactor)
 // WithTodoInjector 在摘要末尾注入活跃任务列表，防止 LLM 在上下文压缩后遗忘未完成任务。
 func WithTodoInjector(ti TodoInjector) CompactorOption {
 	return func(c *SummarizationCompactor) { c.TodoInjector = ti }
+}
+
+// WithMemoryExtractor 注入长期记忆提取器，在每次压缩摘要前从 head 消息提取持久事实。
+func WithMemoryExtractor(ex MemoryExtractor) CompactorOption {
+	return func(c *SummarizationCompactor) { c.extractor = ex }
 }
 
 // NewSummarizationCompactor 创建针对指定 context window 大小的 SummarizationCompactor。
@@ -110,6 +123,11 @@ func (c *SummarizationCompactor) Compact(msgs []schema.Message) []schema.Message
 	headEnd := len(rest) - minTail
 	head := rest[:headEnd]
 	tail := rest[headEnd:]
+
+	// 压缩前提取：在 head 被摘要抹除前，先提取持久事实到长期记忆（fail-open）。
+	if c.extractor != nil {
+		c.extractor.Extract(head)
+	}
 
 	summary, err := c.summarize(head)
 	if err != nil {
