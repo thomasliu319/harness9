@@ -236,7 +236,7 @@ func (s *Store) Update(ctx context.Context, e *Entry) error {
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("记忆不存在: %s", e.ID)
+		return fmt.Errorf("%w: %s", ErrNotFound, e.ID)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM memories_fts WHERE id = ?`, e.ID); err != nil {
 		return fmt.Errorf("清理 fts: %w", err)
@@ -256,9 +256,13 @@ func (s *Store) SoftDelete(ctx context.Context, id string) error {
 		return fmt.Errorf("开启事务: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE long_term_memories SET disabled = 1, signature = NULL, updated_at = ? WHERE id = ?`, s.now().Unix(), id); err != nil {
+	res, err := tx.ExecContext(ctx,
+		`UPDATE long_term_memories SET disabled = 1, signature = NULL, updated_at = ? WHERE id = ?`, s.now().Unix(), id)
+	if err != nil {
 		return fmt.Errorf("软删除: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM memories_fts WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("清理 fts: %w", err)
