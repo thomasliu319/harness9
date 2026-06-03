@@ -189,7 +189,7 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]*Entry, 
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("遍历 fts 结果: %w", err)
 	}
 
 	now := s.now()
