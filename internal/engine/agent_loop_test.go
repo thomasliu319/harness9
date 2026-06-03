@@ -491,15 +491,33 @@ func TestMemoryNudgeInjectedEveryNTurns(t *testing.T) {
 	}
 }
 
-// TestMemoryNudgeNotPersisted 验证 nudge 注入到每轮的临时副本，不污染 contextHistory。
+// TestMemoryNudgeNotPersisted 验证 nudge 仅注入每轮发送给 LLM 的临时副本，
+// 绝不写入持久化的 Session（contextHistory 不被污染）。
 func TestMemoryNudgeNotPersisted(t *testing.T) {
-	// nudge 注入到每轮的临时副本，不应污染 contextHistory（此处验证不 panic、正常结束）。
+	const nudge = "【记忆提示】请勿持久化此行"
 	mock := providertest.NewMockWithCallback(func(_ []schema.Message, _ []schema.ToolDefinition) schema.Message {
 		return schema.Message{Role: schema.RoleAssistant, Content: "done"}
 	})
-	eng := NewAgentEngine(mock, tools.NewRegistry(), t.TempDir(), WithMemoryNudge(1, "提示"))
+	sess := newMemorySessionForTest("nudge-sess")
+	eng := NewAgentEngine(mock, tools.NewRegistry(), t.TempDir(),
+		WithMemoryNudge(1, nudge),
+		WithSession(sess),
+	)
 	if err := eng.Run(context.Background(), "hi"); err != nil {
 		t.Fatalf("Run: %v", err)
+	}
+	// 读回持久化的会话消息，确认 nudge 文本从未落盘。
+	msgs, err := sess.GetMessages(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("GetMessages: %v", err)
+	}
+	if len(msgs) == 0 {
+		t.Fatal("会话应至少持久化用户输入与助手回复")
+	}
+	for _, m := range msgs {
+		if strings.Contains(m.Content, nudge) {
+			t.Errorf("nudge 提示不应被持久化到会话，却出现在: %q", m.Content)
+		}
 	}
 }
 
