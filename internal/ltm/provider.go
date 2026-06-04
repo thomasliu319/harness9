@@ -1,3 +1,7 @@
+// Package ltm — provider：Phase 3 扩展接口定义（Phase 3 接缝）。
+// 本文件定义三个扩展接口（Provider / Embedder / Consolidator）和 noopProvider 默认实现，
+// 作为向量嵌入语义检索、Dreaming 巩固和外部记忆提供者的预留插口（Phase 3 扩展点）。
+// 当前主流程不调用这些接口，noopProvider 使代码在不注入任何实现的情况下可编译运行。
 package ltm
 
 import (

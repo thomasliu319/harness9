@@ -1,3 +1,7 @@
+// Package ltm — Store：长期记忆的 SQLite 数据访问层。
+// 本文件实现 Store，管理 long_term_memories 表与 standalone FTS5 memories_fts 索引，
+// 提供去重写入（Add）、FTS5 全文检索（Search）、更新（Update）、软删除（SoftDelete）、
+// 列表（List）、清理（PurgeExpired）和陈旧识别（StaleCandidates）等操作。
 package ltm
 
 import (
@@ -130,7 +134,7 @@ func (s *Store) Add(ctx context.Context, e *Entry) (*Entry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("开启事务: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO long_term_memories
 			(id, title, content, category, importance, signature, created_at, updated_at, use_count, ttl_days, disabled, tags)
@@ -178,16 +182,15 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]*Entry, 
 	if err != nil {
 		return nil, fmt.Errorf("fts 检索: %w", err)
 	}
+	defer rows.Close()
 	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
 			return nil, fmt.Errorf("扫描 fts 结果: %w", err)
 		}
 		ids = append(ids, id)
 	}
-	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("遍历 fts 结果: %w", err)
 	}
@@ -224,7 +227,7 @@ func (s *Store) Update(ctx context.Context, e *Entry) error {
 	if err != nil {
 		return fmt.Errorf("开启事务: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	res, err := tx.ExecContext(ctx,
 		`UPDATE long_term_memories
@@ -255,7 +258,7 @@ func (s *Store) SoftDelete(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("开启事务: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 	res, err := tx.ExecContext(ctx,
 		`UPDATE long_term_memories SET disabled = 1, signature = NULL, updated_at = ? WHERE id = ?`, s.now().Unix(), id)
 	if err != nil {

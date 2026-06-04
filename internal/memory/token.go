@@ -1,4 +1,6 @@
 // Package memory — token 估算工具。
+// 本文件提供基于字符数÷4 的轻量级 token 估算函数，与 HermesAgent / OpenCode 策略一致。
+// 无外部依赖，略偏保守（实际 token 数通常低于估算），适合 80% 阈值触发压缩的场景。
 package memory
 
 import (

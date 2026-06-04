@@ -1,3 +1,8 @@
+// Package subagent — Runner：构建并运行隔离子代理引擎。
+// 本文件实现 Runner，负责为每次子代理调用构建独立的工具注册表和引擎实例，
+// 消费子引擎事件流并将进度透传给父 TUI，同时桥接审批回调。
+// 关键设计：子代理从会话级 baseCtx 派生 execCtx，绕过父工具的 60s 超时限制，
+// 避免多轮子代理在单次工具调用超时前被强制终止。
 package subagent
 
 import (

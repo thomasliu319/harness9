@@ -1,3 +1,7 @@
+// Package ltm — Precis：MEMORY.md 物化视图管理器。
+// 本文件实现 Precis，从 Store 拉取 top-N 高价值条目并渲染为有界 Markdown 文件，
+// 供 DefaultPromptBuilder 在每次 Build() 时读取并注入 System Prompt 长期记忆段。
+// 渲染结果在 maxBytes 处按 UTF-8 rune 边界截断，防止 token bomb。
 package ltm
 
 import (

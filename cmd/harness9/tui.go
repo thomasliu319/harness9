@@ -1,3 +1,7 @@
+// TUI 核心：Bubbletea 模型定义、样式变量与 RunTUI 入口。
+// 本文件定义 tuiModel 结构体（Elm Architecture Model）、所有 lipgloss 样式变量、
+// newTUIModel 构造器以及 RunTUI 启动函数。
+// 状态转换逻辑（Update）位于 tui_update.go；视图渲染（View）位于 tui_view.go。
 package main
 
 import (

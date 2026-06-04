@@ -227,3 +227,62 @@ func TestStoreStaleCandidates(t *testing.T) {
 		t.Errorf("应识别出 1 条陈旧候选，got %+v", stale)
 	}
 }
+
+// TestFtsQuery 验证 ftsQuery 将用户输入安全转换为 FTS5 MATCH 表达式：
+// 每个 token 被双引号包裹（内部双引号翻倍转义），以 OR 连接。
+func TestFtsQuery(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"SQLite", `"SQLite"`},
+		{"Go 1.25", `"Go" OR "1.25"`},
+		{"  ", ""},        // 纯空白 → 空串
+		{`a"b`, `"a""b"`}, // 内部双引号翻倍转义
+		{"hello world foo", `"hello" OR "world" OR "foo"`},
+	}
+	for _, tc := range cases {
+		got := ftsQuery(tc.input)
+		if got != tc.want {
+			t.Errorf("ftsQuery(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+// TestStoreSearchDisabledNotReturned 验证 Search 不返回已软删除的条目。
+func TestStoreSearchDisabledNotReturned(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+	e, err := s.Add(ctx, &Entry{Title: "disabled", Content: "此内容应不可见"})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := s.SoftDelete(ctx, e.ID); err != nil {
+		t.Fatalf("SoftDelete: %v", err)
+	}
+	res, err := s.Search(ctx, "此内容应不可见", 5)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(res) != 0 {
+		t.Errorf("软删除后不应出现在搜索结果中，got %d 条", len(res))
+	}
+}
+
+// TestStoreUpdateNotFound 验证 Update 在条目不存在时返回 ErrNotFound 包装的错误。
+func TestStoreUpdateNotFound(t *testing.T) {
+	s, _ := newTestStore(t)
+	err := s.Update(context.Background(), &Entry{ID: "nonexistent", Content: "x", Title: "t"})
+	if err == nil {
+		t.Fatal("Update 不存在的 ID 应返回错误")
+	}
+}
+
+// TestStoreSoftDeleteNotFound 验证 SoftDelete 在条目不存在时返回错误。
+func TestStoreSoftDeleteNotFound(t *testing.T) {
+	s, _ := newTestStore(t)
+	err := s.SoftDelete(context.Background(), "nonexistent-id")
+	if err == nil {
+		t.Fatal("SoftDelete 不存在的 ID 应返回错误")
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestPrecisRegenerateAndRead(t *testing.T) {
@@ -67,4 +68,68 @@ func TestPrecisReadMissing(t *testing.T) {
 	if content != "" {
 		t.Errorf("缺失文件应返回空串，got %q", content)
 	}
+}
+
+// TestTruncateUTF8 验证 truncateUTF8 在 UTF-8 rune 边界处截断，不截断多字节字符。
+// 注意：截断标记本身占用若干字节（"\n…（已截断）"），因此 maxBytes 需大于标记长度才会输出标记。
+func TestTruncateUTF8(t *testing.T) {
+	// budget = maxBytes - len(marker)；budget<=0 时返回空串。
+	// 这里用 len(marker) 动态取标记字节数，避免硬编码与实现脱节。
+	marker := "\n…（已截断）"
+	markerLen := len(marker)
+
+	cases := []struct {
+		name          string
+		input         string
+		maxBytes      int
+		wantTruncated bool
+	}{
+		{
+			name:          "短于上限，不截断",
+			input:         "hello",
+			maxBytes:      100,
+			wantTruncated: false,
+		},
+		{
+			name:          "恰好等于上限，不截断",
+			input:         "hello",
+			maxBytes:      5,
+			wantTruncated: false,
+		},
+		{
+			// 需要 maxBytes 大于 markerLen 才能输出截断标记
+			name:          "ASCII 超出，截断",
+			input:         strings.Repeat("a", markerLen+20),
+			maxBytes:      markerLen + 10,
+			wantTruncated: true,
+		},
+		{
+			// 多字节 UTF-8：4 个汉字 = 12 字节；截断点需回退到合法 rune 边界
+			name:          "多字节 UTF-8 不截断字符内部",
+			input:         "你好世界" + strings.Repeat("x", markerLen+20),
+			maxBytes:      markerLen + 10,
+			wantTruncated: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := truncateUTF8(tc.input, tc.maxBytes)
+			if len(got) > tc.maxBytes {
+				t.Errorf("截断后长度 %d 超过 maxBytes %d", len(got), tc.maxBytes)
+			}
+			hasTruncated := strings.Contains(got, marker)
+			if hasTruncated != tc.wantTruncated {
+				t.Errorf("wantTruncated=%v, hasTruncated=%v, output=%q", tc.wantTruncated, hasTruncated, got)
+			}
+			// 确保输出是合法 UTF-8
+			if !isValidUTF8(got) {
+				t.Errorf("截断结果不是合法 UTF-8: %q", got)
+			}
+		})
+	}
+}
+
+// isValidUTF8 报告 s 是否是合法的 UTF-8 编码字符串。
+func isValidUTF8(s string) bool {
+	return utf8.ValidString(s)
 }

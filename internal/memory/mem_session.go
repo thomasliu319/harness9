@@ -1,3 +1,6 @@
+// Package memory — MemorySession：Session 的纯内存实现。
+// 主要用于测试（隔离 SQLite 依赖）以及子代理的临时会话
+// （子代理上下文在任务结束后即丢弃，无需 SQLite 持久化）。
 package memory
 
 import (

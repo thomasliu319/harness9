@@ -1,3 +1,7 @@
+// Package ltm — Extractor：LLM 压缩前长期记忆提取器。
+// 本文件实现 Extractor，在 SummarizationCompactor 摘要压缩前调用 LLM 从 head 消息中
+// 提取值得跨会话长期保留的事实，并 upsert 到 Store。所有错误 fail-open，不阻断压缩流程。
+// 实现 memory.MemoryExtractor 接口，通过 memory.WithMemoryExtractor 注入 SummarizationCompactor。
 package ltm
 
 import (
