@@ -122,7 +122,7 @@ func (c *Container) Start(ctx context.Context) error {
 		"--label", "harness9=1",
 		"--cap-drop", "all",
 		"--cap-add", "DAC_OVERRIDE",
-		"--no-new-privileges",
+		"--security-opt", "no-new-privileges:true",
 		"--pids-limit", fmt.Sprintf("%d", c.cfg.PidsLimit),
 		"--cpus", c.cfg.CPUs,
 		"--memory", c.cfg.Memory,
@@ -133,7 +133,8 @@ func (c *Container) Start(ctx context.Context) error {
 		"sleep", "infinity",
 	)
 	if err != nil {
-		c.setState(StateFailed, fmt.Errorf("docker run 失败: %w", err))
+		// dockerID 此处实际为 CombinedOutput，包含 docker 的错误信息
+		c.setState(StateFailed, fmt.Errorf("docker run 失败: %w，输出: %s", err, dockerID))
 		return c.err
 	}
 	c.mu.Lock()

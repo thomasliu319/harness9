@@ -170,7 +170,7 @@ func TestContainerDockerRunArgs(t *testing.T) {
 	runArgs := mock.Calls[0]
 	mustContain := []string{
 		"--cap-drop", "all",
-		"--no-new-privileges",
+		"--security-opt", "no-new-privileges:true",
 		"--network", "none",
 		"--label", "harness9=1",
 		"--name", "harness9-my-uuid",
