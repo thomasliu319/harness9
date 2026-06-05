@@ -136,8 +136,19 @@ Flags:
 	var sandboxMgr *sandbox.Manager
 	var sandboxEnv sandbox.Environment // nil = 工具走本地执行路径
 
+	// SandboxBar 通知 channel 必须在 Create 之前创建并注册，
+	// 否则 Create 内部触发的 notify() 因 onUpdate==nil 而丢失，TUI 永远不会收到初始状态。
+	sandboxNotifyCh := make(chan []sandbox.SandboxInfo, 8)
+
 	if sandboxCfg.Enabled {
 		sandboxMgr = sandbox.NewManager(sandboxCfg)
+		// WithUpdateNotify 必须在 Create 之前调用，确保初始创建通知能送达 TUI
+		sandboxMgr.WithUpdateNotify(func(infos []sandbox.SandboxInfo) {
+			select {
+			case sandboxNotifyCh <- infos:
+			default: // 丢弃：buffer 满时 TUI 仍持有旧快照，下次更新会覆盖
+			}
+		})
 		if err := sandboxMgr.ReapOrphans(ctx); err != nil {
 			log.Print(logfmt.FormatMsg("main", fmt.Sprintf("清理孤儿 Sandbox 失败（忽略）: %v", err)))
 		}
@@ -147,16 +158,6 @@ Flags:
 			log.Fatal(logfmt.FormatMsg("main", fmt.Sprintf("创建主 Agent Sandbox 失败: %v", sandboxErr)))
 		}
 		defer sandboxMgr.DestroyAll(ctx)
-	}
-	// SandboxBar 通知 channel：Sandbox 状态变化时发送快照给 TUI
-	sandboxNotifyCh := make(chan []sandbox.SandboxInfo, 8)
-	if sandboxMgr != nil {
-		sandboxMgr.WithUpdateNotify(func(infos []sandbox.SandboxInfo) {
-			select {
-			case sandboxNotifyCh <- infos:
-			default: // 丢弃：buffer 满时 TUI 仍持有旧快照，下次更新会覆盖
-			}
-		})
 	}
 	// ---- Sandbox 系统接线（续：工具注入见下）----
 
