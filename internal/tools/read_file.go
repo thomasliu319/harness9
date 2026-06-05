@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/harness9/internal/sandbox"
 	"github.com/harness9/internal/schema"
 )
 
@@ -27,11 +28,26 @@ const maxReadLen = 4096
 // ReadFileTool 实现了 BaseTool 接口，提供受限工作区内的安全文件读取能力。
 type ReadFileTool struct {
 	workDir string
+	// TODO: 当需要将文件操作路由至容器内执行时，接入 env.ReadFile/WriteFile。
+	// 目前文件操作通过 bind mount 在宿主机侧执行，与容器内视图一致，无需路由。
+	env sandbox.Environment
+}
+
+// ReadFileOption 是 ReadFileTool 的功能选项函数。
+type ReadFileOption func(*ReadFileTool)
+
+// ReadFileWithEnvironment 注入执行环境（当前文件工具通过 bind mount 无需路由，预留扩展）。
+func ReadFileWithEnvironment(env sandbox.Environment) ReadFileOption {
+	return func(t *ReadFileTool) { t.env = env }
 }
 
 // NewReadFileTool 创建绑定到指定工作区的文件读取工具。
-func NewReadFileTool(workDir string) *ReadFileTool {
-	return &ReadFileTool{workDir: filepath.Clean(workDir)}
+func NewReadFileTool(workDir string, opts ...ReadFileOption) *ReadFileTool {
+	t := &ReadFileTool{workDir: filepath.Clean(workDir)}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
 }
 
 // Name 返回工具标识符 "read_file"。

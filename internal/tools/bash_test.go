@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -131,5 +132,89 @@ func TestBashTool_Execute_ParentContextCancelled(t *testing.T) {
 	// string) — never an empty string or a spurious success message.
 	if out == "" || strings.Contains(out, "成功") {
 		t.Errorf("killed command should return informative output, got: %q", out)
+	}
+}
+
+// mockEnv 是 sandbox.Environment 的测试 mock，记录所有 RunBash 调用。
+type mockEnv struct {
+	runOut string
+	runErr error
+	Calls  []string
+}
+
+func (m *mockEnv) RunBash(_ context.Context, cmd, _ string) (string, error) {
+	m.Calls = append(m.Calls, cmd)
+	return m.runOut, m.runErr
+}
+func (m *mockEnv) ReadFile(_ context.Context, _ string) ([]byte, error)  { return nil, nil }
+func (m *mockEnv) WriteFile(_ context.Context, _ string, _ []byte) error { return nil }
+func (m *mockEnv) ID() string                                            { return "mock-env" }
+func (m *mockEnv) Close(_ context.Context) error                         { return nil }
+
+func TestBashTool_WithEnvironment_RoutesToEnv(t *testing.T) {
+	env := &mockEnv{runOut: "container output\n"}
+	tool := NewBashTool("/tmp", WithEnvironment(env))
+
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo hello"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if out != "container output\n" {
+		t.Errorf("应路由到 env.RunBash，output = %q", out)
+	}
+	if len(env.Calls) != 1 || env.Calls[0] != "echo hello" {
+		t.Errorf("env.RunBash 未被调用，Calls = %v", env.Calls)
+	}
+}
+
+func TestBashTool_NilEnvironment_UsesLocal(t *testing.T) {
+	tool := NewBashTool("/tmp")
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo local"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, "local") {
+		t.Errorf("nil env 应走本地执行，output = %q", out)
+	}
+}
+
+func TestBashTool_WithEnvironment_LargeOutputTruncated(t *testing.T) {
+	largeOut := strings.Repeat("x", maxOutputLen+100)
+	env := &mockEnv{runOut: largeOut}
+	tool := NewBashTool("/tmp", WithEnvironment(env))
+
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"big"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, "截断") {
+		t.Errorf("大输出应被截断，output length = %d", len(out))
+	}
+}
+
+func TestBashTool_WithEnvironment_EmptyOutput(t *testing.T) {
+	env := &mockEnv{runOut: ""}
+	tool := NewBashTool("/tmp", WithEnvironment(env))
+
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"true"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, "成功") {
+		t.Errorf("空输出应提示成功，got: %q", out)
+	}
+}
+
+func TestBashTool_WithEnvironment_EnvError(t *testing.T) {
+	// RunBash 返回非空 error（环境级错误，非命令失败）
+	env := &mockEnv{runOut: "", runErr: fmt.Errorf("container not found")}
+	tool := NewBashTool("/tmp", WithEnvironment(env))
+
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo hi"}`))
+	if err != nil {
+		t.Fatalf("Execute 不应返回 Go error: %v", err)
+	}
+	if !strings.Contains(out, "执行报错") {
+		t.Errorf("env error 应转为错误字符串，got: %q", out)
 	}
 }

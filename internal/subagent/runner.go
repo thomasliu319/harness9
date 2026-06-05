@@ -15,6 +15,7 @@ import (
 	"github.com/harness9/internal/memory"
 	"github.com/harness9/internal/permission"
 	"github.com/harness9/internal/provider"
+	"github.com/harness9/internal/sandbox"
 	"github.com/harness9/internal/schema"
 	"github.com/harness9/internal/skills"
 	"github.com/harness9/internal/tools"
@@ -32,7 +33,8 @@ type Runner struct {
 	maxConcurrentTools int
 	providerFor        func(model string) (provider.LLMProvider, int, error)
 	compactorFor       func(p provider.LLMProvider, ctxWin int) memory.Compactor
-	baseCtx            context.Context // 会话级 ctx，后台任务从此派生
+	baseCtx            context.Context  // 会话级 ctx，后台任务从此派生
+	sandboxMgr         *sandbox.Manager // optional；nil = 子代理不使用 Sandbox
 }
 
 // SubAgentResult 是子代理一次执行的结果。
@@ -57,10 +59,12 @@ func (denyTaskHook) AfterExecute(_ context.Context, _ schema.ToolCall, r schema.
 
 // buildChildRegistry 构造子代理的隔离工具注册表：仅注册定义允许的基础工具
 // （永不含 task），再包权限派生 hook + denyTaskHook + sharedHooks（danger/offload）。
-func (r *Runner) buildChildRegistry(def SubAgentDefinition) (tools.Registry, error) {
-	allNames := make([]string, 0, len(r.baseTools))
-	byName := make(map[string]tools.BaseTool, len(r.baseTools))
-	for _, t := range r.baseTools {
+// baseTools 参数允许调用方传入经 sandbox 包装后的工具集（Sandbox 模式），
+// 或直接传入 r.baseTools（无 Sandbox 模式），实现解耦。
+func (r *Runner) buildChildRegistry(def SubAgentDefinition, baseTools []tools.BaseTool) (tools.Registry, error) {
+	allNames := make([]string, 0, len(baseTools))
+	byName := make(map[string]tools.BaseTool, len(baseTools))
+	for _, t := range baseTools {
 		allNames = append(allNames, t.Name())
 		byName[t.Name()] = t
 	}
@@ -83,7 +87,18 @@ func (r *Runner) buildChildRegistry(def SubAgentDefinition) (tools.Registry, err
 // Run 同步执行一个子代理：构建隔离子引擎，调用 RunStream，消费事件流，
 // 转发进度、桥接审批、累积最终文本。background 控制审批策略与执行 context。
 func (r *Runner) Run(ctx context.Context, def SubAgentDefinition, prompt string, background bool) (SubAgentResult, error) {
-	childReg, err := r.buildChildRegistry(def)
+	// 为子代理创建独立 Sandbox（若 Manager 已配置）
+	effectiveBaseTools := r.baseTools
+	if r.sandboxMgr != nil {
+		sandboxEnv, err := r.sandboxMgr.Create(ctx, r.workDir)
+		if err != nil {
+			return SubAgentResult{}, fmt.Errorf("sandbox: 为子代理创建环境失败: %w", err)
+		}
+		defer r.sandboxMgr.Destroy(r.baseCtx, sandboxEnv.ID())
+		effectiveBaseTools = wrapToolsWithSandbox(r.baseTools, sandboxEnv, r.workDir)
+	}
+
+	childReg, err := r.buildChildRegistry(def, effectiveBaseTools)
 	if err != nil {
 		return SubAgentResult{}, fmt.Errorf("构建子代理工具注册表失败: %w", err)
 	}
@@ -223,6 +238,7 @@ type RunnerConfig struct {
 	ProviderFor        func(model string) (provider.LLMProvider, int, error)
 	CompactorFor       func(p provider.LLMProvider, ctxWin int) memory.Compactor
 	BaseCtx            context.Context
+	SandboxMgr         *sandbox.Manager // optional；nil = 子代理不使用 Sandbox
 }
 
 // NewRunner 从配置构造 Runner。
@@ -239,5 +255,28 @@ func NewRunner(cfg RunnerConfig) *Runner {
 		providerFor:        cfg.ProviderFor,
 		compactorFor:       cfg.CompactorFor,
 		baseCtx:            cfg.BaseCtx,
+		sandboxMgr:         cfg.SandboxMgr,
 	}
+}
+
+// wrapToolsWithSandbox 为标准工具注入 sandbox.Environment，非标准工具原样返回。
+// 工具名字符串（"bash"/"read_file" 等）与各 Tool.Name() 方法返回值耦合；
+// 若工具名变更，此处需同步维护。
+func wrapToolsWithSandbox(ts []tools.BaseTool, env sandbox.Environment, workDir string) []tools.BaseTool {
+	result := make([]tools.BaseTool, len(ts))
+	for i, t := range ts {
+		switch t.Name() {
+		case "bash":
+			result[i] = tools.NewBashTool(workDir, tools.WithEnvironment(env))
+		case "read_file":
+			result[i] = tools.NewReadFileTool(workDir, tools.ReadFileWithEnvironment(env))
+		case "write_file":
+			result[i] = tools.NewWriteFileTool(workDir, tools.WriteFileWithEnvironment(env))
+		case "edit_file":
+			result[i] = tools.NewEditFileTool(workDir, tools.EditFileWithEnvironment(env))
+		default:
+			result[i] = t
+		}
+	}
+	return result
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/harness9/internal/engine"
 	"github.com/harness9/internal/memory"
 	"github.com/harness9/internal/planning"
+	"github.com/harness9/internal/sandbox"
 	"github.com/harness9/internal/schema"
 	"github.com/harness9/internal/subagent"
 )
@@ -581,10 +582,61 @@ func (m tuiModel) View() string {
 		}
 		sb.WriteString(m.renderStatusBar())
 		sb.WriteByte('\n')
+		if bar := m.renderSandboxBar(); bar != "" {
+			sb.WriteString(bar)
+			sb.WriteByte('\n')
+		}
 		sb.WriteString(m.renderInput())
 		sb.WriteByte('\n')
 		sb.WriteString(m.renderFooter())
 	}
 
 	return sb.String()
+}
+
+// renderSandboxBar 渲染 Sandbox 状态栏，仅在有活跃 Sandbox 时显示。
+// 格式: [Sandbox] 3a2f (main) Running │ 7b1c (sub-1) Running
+func (m tuiModel) renderSandboxBar() string {
+	if len(m.sandboxes) == 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, len(m.sandboxes)+1)
+	parts = append(parts, sandboxBarBgStyle.Render("[Sandbox]"))
+
+	for i, info := range m.sandboxes {
+		label := "main"
+		if i > 0 {
+			label = fmt.Sprintf("sub-%d", i)
+		}
+
+		shortID := info.DockerID
+		if len(shortID) > 4 {
+			shortID = shortID[:4]
+		}
+
+		stateStr := info.State.String()
+		var stateStyled string
+		switch info.State {
+		case sandbox.StateRunning:
+			stateStyled = sandboxRunningStyle.Render(stateStr)
+		case sandbox.StatePending:
+			stateStyled = sandboxPendingStyle.Render(stateStr)
+		case sandbox.StateStopping, sandbox.StateTerminated:
+			stateStyled = sandboxStoppingStyle.Render(stateStr)
+		case sandbox.StateFailed:
+			stateStyled = sandboxFailedStyle.Render(stateStr)
+		default:
+			stateStyled = stateStr
+		}
+
+		parts = append(parts, fmt.Sprintf("%s (%s) %s", shortID, label, stateStyled))
+	}
+
+	bar := strings.Join(parts, " │ ")
+	// 超过终端宽度时降级为不显示，确保布局稳定
+	if m.width > 0 && lipgloss.Width(bar) > m.width-2 {
+		return ""
+	}
+	return bar
 }

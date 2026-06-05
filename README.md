@@ -245,6 +245,28 @@ harness9 内置一个 **`general-purpose`（通用）子代理**，设计对标 
 
 详见 [Sub-Agent 系统实现原理](docs/核心功能/sub-agent.md)。
 
+### Sandbox（Docker 容器级隔离）
+
+在 `.env` 中设置 `SANDBOX_ENABLED=true`，所有工具调用将在独立 Docker 容器内执行：
+
+```
+[Sandbox] 3a2f (main) Running │ 7b1c (sub-1) Running
+```
+
+- **OS 级隔离**：独立进程空间、网络完全禁用（fail-closed）、Capability 最小化（`--cap-drop all`）、防 fork bomb（`--pids-limit 256`）
+- **透明路由**：`bash` 命令通过 `docker exec` 进容器，文件工具通过 bind mount 共享 workDir——Agent 行为不变，无需修改 prompt
+- **Agent 级隔离**：主 Agent 和每个 Sub-Agent 各自拥有独立 Sandbox 容器，互不影响
+- **TUI SandboxBar**：StatusBar 下方实时展示所有活跃 Sandbox 的 ID 和状态（绿=Running、黄=Pending、红=Failed）
+- **孤儿回收**：以 `label=harness9=1` 标记所有管理的容器，进程崩溃后下次启动自动清理残留容器
+
+```bash
+# 启用 Sandbox
+echo "SANDBOX_ENABLED=true" >> .env
+harness9
+```
+
+详见 [Sandbox 沙箱系统](docs/核心功能/sandbox.md)。
+
 ### 标准 ReAct 循环
 
 每个 Turn 执行一次 LLM 调用（携带完整工具列表），工具结果作为 Observation 注入上下文，驱动下一轮推理：
@@ -304,6 +326,7 @@ for evt := range stream {
 | **Provider**   | LLM 统一接口，OpenAI / Anthropic 适配器，实际 token 用量提取                                           | ✅   |
 | **Schema**     | 跨组件共享的核心数据类型（Message、ToolCall、Usage 等）                                                  | ✅   |
 | **Tools**      | 工具注册表 + 内置工具（bash / read_file（offset/limit 分页）/ write_file / edit_file / todo_write / memory_write / memory_search）                 | ✅   |
+| **Sandbox**    | Docker 容器级隔离：OS 级进程沙箱（cap-drop/no-new-privileges/network=none）、Agent 级独立容器、bind mount 工具透明路由、TUI SandboxBar、孤儿容器回收；`SANDBOX_ENABLED=true` 启用 | ✅   |
 | **Env**        | 零依赖 `.env` 配置加载器                                                                        | ✅   |
 
 
@@ -361,6 +384,7 @@ harness9/
 | [文件系统能力技术方案](docs/核心功能/file-system.md)                         | OffloadHook、FilePlanWriter、read_file 分页、Session GC、Hooks 扩展 |
 | [Shell 执行功能技术方案](docs/核心功能/shell-execution.md)                   | `!` 前缀触发、异步执行机制、LLM 上下文注入、截断策略、交互式命令拦截          |
 | [Human-in-the-Loop 权限控制](docs/核心功能/human-in-the-loop.md)           | HookDecision、DangerHook、PermissionHook、审批对话框、白名单配置、敏感路径保护  |
+| [Sandbox 沙箱系统](docs/核心功能/sandbox.md)                               | Docker 容器级隔离、Environment 接口、五状态生命周期、安全加固参数、TUI SandboxBar、孤儿回收 |
 | [AGENTS.md](AGENTS.md)                                       | 项目开发规范、编码标准、架构决策                                        |
 
 

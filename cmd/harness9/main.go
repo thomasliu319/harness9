@@ -34,6 +34,7 @@ import (
 	"github.com/harness9/internal/permission"
 	"github.com/harness9/internal/planning"
 	"github.com/harness9/internal/provider"
+	"github.com/harness9/internal/sandbox"
 	"github.com/harness9/internal/skills"
 	"github.com/harness9/internal/subagent"
 	"github.com/harness9/internal/tools"
@@ -130,6 +131,36 @@ Flags:
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// ---- Sandbox 系统接线 ----
+	sandboxCfg := sandbox.DefaultConfig()
+	var sandboxMgr *sandbox.Manager
+	var sandboxEnv sandbox.Environment // nil = 工具走本地执行路径
+
+	// SandboxBar 通知 channel 必须在 Create 之前创建并注册，
+	// 否则 Create 内部触发的 notify() 因 onUpdate==nil 而丢失，TUI 永远不会收到初始状态。
+	sandboxNotifyCh := make(chan []sandbox.SandboxInfo, 8)
+
+	if sandboxCfg.Enabled {
+		sandboxMgr = sandbox.NewManager(sandboxCfg)
+		// WithUpdateNotify 必须在 Create 之前调用，确保初始创建通知能送达 TUI
+		sandboxMgr.WithUpdateNotify(func(infos []sandbox.SandboxInfo) {
+			select {
+			case sandboxNotifyCh <- infos:
+			default: // 丢弃：buffer 满时 TUI 仍持有旧快照，下次更新会覆盖
+			}
+		})
+		if err := sandboxMgr.ReapOrphans(ctx); err != nil {
+			log.Print(logfmt.FormatMsg("main", fmt.Sprintf("清理孤儿 Sandbox 失败（忽略）: %v", err)))
+		}
+		var sandboxErr error
+		sandboxEnv, sandboxErr = sandboxMgr.Create(ctx, workDir)
+		if sandboxErr != nil {
+			log.Fatal(logfmt.FormatMsg("main", fmt.Sprintf("创建主 Agent Sandbox 失败: %v", sandboxErr)))
+		}
+		defer sandboxMgr.DestroyAll(ctx)
+	}
+	// ---- Sandbox 系统接线（续：工具注入见下）----
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		log.Fatal(logfmt.FormatMsg("main", fmt.Sprintf("获取 home 目录失败: %v", err)))
@@ -177,10 +208,10 @@ Flags:
 		log.Fatal(logfmt.FormatMsg("main", fmt.Sprintf("初始化 FilePlanWriter 失败: %v", err)))
 	}
 	for _, tool := range []tools.BaseTool{
-		tools.NewReadFileTool(workDir),
-		tools.NewWriteFileTool(workDir),
-		tools.NewBashTool(workDir),
-		tools.NewEditFileTool(workDir),
+		tools.NewReadFileTool(workDir, tools.ReadFileWithEnvironment(sandboxEnv)),
+		tools.NewWriteFileTool(workDir, tools.WriteFileWithEnvironment(sandboxEnv)),
+		tools.NewBashTool(workDir, tools.WithEnvironment(sandboxEnv)),
+		tools.NewEditFileTool(workDir, tools.EditFileWithEnvironment(sandboxEnv)),
 		skills.NewUseSkillTool(skillsIndex),
 		tools.NewTodoWriteTool(todoStore, tools.WithPlanWriter(planWriter)),
 		tools.NewMemoryWriteTool(ltmStore, ltmPrecis),
@@ -243,6 +274,7 @@ Flags:
 		DefaultMaxTurns:    agentMaxTurns,
 		ToolTimeout:        60 * time.Second,
 		MaxConcurrentTools: 0,
+		SandboxMgr:         sandboxMgr,
 		ProviderFor: func(model string) (provider.LLMProvider, int, error) {
 			if model == "" {
 				return llm, modelLimits.ContextTokens, nil
@@ -287,7 +319,7 @@ Flags:
 
 	if term.IsTerminal(os.Stdin.Fd()) {
 		log.Print(logfmt.FormatMsg("main", fmt.Sprintf("harness9 TUI 启动 │ workDir=%s", workDir)))
-		if err := RunTUI(ctx, eng, mgr, sess, skillsIndex, todoStore, subAgentTracker, subAgentReg, subAgentRunner, workDir, modelName); err != nil {
+		if err := RunTUI(ctx, eng, mgr, sess, skillsIndex, todoStore, subAgentTracker, subAgentReg, subAgentRunner, workDir, modelName, sandboxNotifyCh); err != nil {
 			log.Fatal(logfmt.FormatMsg("main", fmt.Sprintf("TUI 退出: %v", err)))
 		}
 	} else {

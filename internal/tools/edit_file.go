@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/harness9/internal/sandbox"
 	"github.com/harness9/internal/schema"
 )
 
@@ -26,12 +27,27 @@ import (
 type EditFileTool struct {
 	// workDir 沙箱边界（Sandbox Boundary），所有文件操作被限制在此目录内。
 	workDir string
+	// TODO: 当需要将文件操作路由至容器内执行时，接入 env.ReadFile/WriteFile。
+	// 目前文件操作通过 bind mount 在宿主机侧执行，与容器内视图一致，无需路由。
+	env sandbox.Environment
+}
+
+// EditFileOption 是 EditFileTool 的功能选项函数。
+type EditFileOption func(*EditFileTool)
+
+// EditFileWithEnvironment 注入执行环境（当前文件工具通过 bind mount 无需路由，预留扩展）。
+func EditFileWithEnvironment(env sandbox.Environment) EditFileOption {
+	return func(t *EditFileTool) { t.env = env }
 }
 
 // NewEditFileTool 创建绑定到指定工作区的文件编辑工具。
 // workDir 会被 filepath.Clean 清洗，确保路径规范化（Path Normalization）。
-func NewEditFileTool(workDir string) *EditFileTool {
-	return &EditFileTool{workDir: filepath.Clean(workDir)}
+func NewEditFileTool(workDir string, opts ...EditFileOption) *EditFileTool {
+	t := &EditFileTool{workDir: filepath.Clean(workDir)}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
 }
 
 // Name 返回工具标识符 "edit_file"。

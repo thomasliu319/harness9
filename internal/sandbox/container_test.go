@@ -1,0 +1,191 @@
+// internal/sandbox/container_test.go
+package sandbox
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"testing"
+	"time"
+)
+
+// mockCmdRunner 捕获 docker 命令调用，按顺序返回预设响应。
+type mockCmdRunner struct {
+	mu        sync.Mutex
+	responses []mockResponse
+	idx       int
+	Calls     [][]string
+}
+
+type mockResponse struct {
+	out string
+	err error
+}
+
+func newMock(pairs ...interface{}) *mockCmdRunner {
+	m := &mockCmdRunner{}
+	for i := 0; i+1 < len(pairs); i += 2 {
+		var errVal error
+		if pairs[i+1] != nil {
+			errVal = pairs[i+1].(error)
+		}
+		m.responses = append(m.responses, mockResponse{
+			out: pairs[i].(string),
+			err: errVal,
+		})
+	}
+	return m
+}
+
+func errNil() error { return nil }
+
+func (m *mockCmdRunner) run(_ context.Context, args ...string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls = append(m.Calls, append([]string{}, args...))
+	if m.idx >= len(m.responses) {
+		return "", nil
+	}
+	r := m.responses[m.idx]
+	m.idx++
+	return r.out, r.err
+}
+
+func testCfg() SandboxConfig {
+	return SandboxConfig{
+		Image:        "ubuntu:22.04",
+		CPUs:         "1.0",
+		Memory:       "512m",
+		PidsLimit:    256,
+		StartTimeout: 5 * time.Second,
+		StopTimeout:  5 * time.Second,
+	}
+}
+
+func TestContainerStart_Success(t *testing.T) {
+	mock := newMock(
+		"abc123def456", errNil(), // docker run → containerID
+		"true", errNil(), // docker inspect → running
+	)
+	c := newContainer("test-uuid", t.TempDir(), testCfg(), mock.run)
+
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+	if c.State() != StateRunning {
+		t.Errorf("State = %v, 期望 Running", c.State())
+	}
+	if c.dockerID != "abc123def456" {
+		t.Errorf("dockerID = %q, 期望 abc123def456", c.dockerID)
+	}
+}
+
+func TestContainerStart_DockerRunFails(t *testing.T) {
+	mock := newMock(
+		"", errors.New("daemon not found"),
+	)
+	c := newContainer("test-uuid", t.TempDir(), testCfg(), mock.run)
+
+	err := c.Start(context.Background())
+	if err == nil {
+		t.Fatal("docker run 失败时 Start() 应返回 error")
+	}
+	if c.State() != StateFailed {
+		t.Errorf("State = %v, 期望 Failed", c.State())
+	}
+}
+
+func TestContainerStop(t *testing.T) {
+	mock := newMock(
+		"abc123", errNil(), // docker run
+		"true", errNil(), // docker inspect
+		"", errNil(), // docker stop
+		"", errNil(), // docker rm
+	)
+	c := newContainer("test-uuid", t.TempDir(), testCfg(), mock.run)
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	if err := c.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error: %v", err)
+	}
+	if c.State() != StateTerminated {
+		t.Errorf("State = %v, 期望 Terminated", c.State())
+	}
+}
+
+func TestContainerStateString(t *testing.T) {
+	cases := []struct {
+		state ContainerState
+		want  string
+	}{
+		{StatePending, "Pending"},
+		{StateRunning, "Running"},
+		{StateStopping, "Stopping"},
+		{StateTerminated, "Terminated"},
+		{StateFailed, "Failed"},
+	}
+	for _, tc := range cases {
+		if got := tc.state.String(); got != tc.want {
+			t.Errorf("ContainerState(%d).String() = %q, 期望 %q", tc.state, got, tc.want)
+		}
+	}
+}
+
+func TestContainerStart_InspectTimeout(t *testing.T) {
+	// inspect 始终返回 "false"，StartTimeout 设置极短触发超时
+	mock := newMock(
+		"abc123", errNil(), // docker run 成功
+		"false", errNil(), // inspect 返回 false（未就绪）
+	)
+	cfg := testCfg()
+	cfg.StartTimeout = 100 * time.Millisecond // 极短超时
+	c := newContainer("timeout-uuid", t.TempDir(), cfg, mock.run)
+
+	err := c.Start(context.Background())
+	if err == nil {
+		t.Fatal("inspect 持续返回 false 时 Start() 应返回 error")
+	}
+	if c.State() != StateFailed {
+		t.Errorf("State = %v, 期望 Failed", c.State())
+	}
+	if c.Err() == nil {
+		t.Error("Err() 应记录超时原因")
+	}
+}
+
+func TestContainerDockerRunArgs(t *testing.T) {
+	mock := newMock(
+		"abc123", errNil(),
+		"true", errNil(),
+	)
+	cfg := testCfg()
+	workDir := t.TempDir()
+	c := newContainer("my-uuid", workDir, cfg, mock.run)
+	_ = c.Start(context.Background())
+
+	// 验证 docker run 调用参数包含安全加固选项
+	runArgs := mock.Calls[0]
+	mustContain := []string{
+		"--cap-drop", "all",
+		"--security-opt", "no-new-privileges:true",
+		"--network", "none",
+		"--label", "harness9=1",
+		"--name", "harness9-my-uuid",
+	}
+	argStr := fmt.Sprintf("%v", runArgs)
+	for _, want := range mustContain {
+		found := false
+		for _, arg := range runArgs {
+			if arg == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("docker run 参数缺少 %q，完整参数: %s", want, argStr)
+		}
+	}
+}

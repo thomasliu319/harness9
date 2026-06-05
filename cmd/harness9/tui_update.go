@@ -37,6 +37,7 @@ import (
 	"github.com/harness9/internal/memory"
 	"github.com/harness9/internal/permission"
 	"github.com/harness9/internal/planning"
+	"github.com/harness9/internal/sandbox"
 	"github.com/harness9/internal/schema"
 	"github.com/harness9/internal/subagent"
 )
@@ -119,6 +120,22 @@ type subAgentDirectMsg struct {
 	done   bool
 	result string
 	err    error
+}
+
+// sandboxUpdateMsg 在 Manager 状态变更时由 waitSandboxUpdate 发送。
+type sandboxUpdateMsg struct {
+	infos []sandbox.SandboxInfo
+}
+
+// waitSandboxUpdate 返回一个 tea.Cmd，阻塞等待 sandboxCh 发来更新后触发 sandboxUpdateMsg。
+func waitSandboxUpdate(ch <-chan []sandbox.SandboxInfo) tea.Cmd {
+	return func() tea.Msg {
+		infos, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return sandboxUpdateMsg{infos: infos}
+	}
 }
 
 // readNextSubAgentDirect 读取一条直跑消息并投递给 Update；ch 关闭时投递终止 done。
@@ -385,6 +402,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case subAgentNotifyMsg:
 		// 后台子代理完成：即时将结果显示到对话区（用户立即可见），并缓存待下次注入 LLM。
 		m = m.harvestSubAgentResults()
+		return m, nil
+
+	case sandboxUpdateMsg:
+		m.sandboxes = msg.infos
+		// 继续等待下次更新（持续监听 channel）；nil 守卫防止 nil channel 永久阻塞。
+		if m.sandboxCh != nil {
+			return m, waitSandboxUpdate(m.sandboxCh)
+		}
 		return m, nil
 
 	case subAgentDirectMsg:
@@ -721,6 +746,9 @@ func (m tuiModel) scrollHeight() int {
 	}
 	if n := len(m.subAgentLines); n > 0 {
 		reserved += n // + 子代理进度块（每行占一行）
+	}
+	if len(m.sandboxes) > 0 {
+		reserved++ // + SandboxBar
 	}
 	h := m.height - reserved
 	if h < 1 {
