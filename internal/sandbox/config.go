@@ -39,6 +39,7 @@ func DefaultConfig() SandboxConfig {
 	}
 }
 
+// getenvOr 从环境变量读取 key，未设置或为空时返回 fallback。
 func getenvOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v

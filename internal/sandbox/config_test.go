@@ -1,16 +1,15 @@
 package sandbox
 
 import (
-	"os"
 	"testing"
 	"time"
 )
 
 func TestDefaultConfig_Defaults(t *testing.T) {
-	os.Unsetenv("SANDBOX_ENABLED")
-	os.Unsetenv("SANDBOX_IMAGE")
-	os.Unsetenv("SANDBOX_CPUS")
-	os.Unsetenv("SANDBOX_MEMORY")
+	t.Setenv("SANDBOX_ENABLED", "")
+	t.Setenv("SANDBOX_IMAGE", "")
+	t.Setenv("SANDBOX_CPUS", "")
+	t.Setenv("SANDBOX_MEMORY", "")
 
 	cfg := DefaultConfig()
 
