@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/harness9/internal/sandbox"
 	"github.com/harness9/internal/schema"
 )
 
@@ -24,12 +25,25 @@ type WriteFileTool struct {
 	// workDir 工具允许写入的根目录（Sandbox Boundary，沙箱边界），
 	// 所有写入操作被限制在此目录树内。
 	workDir string
+	env     sandbox.Environment // 预留：当前文件操作通过 bind mount 在宿主机侧执行
+}
+
+// WriteFileOption 是 WriteFileTool 的功能选项函数。
+type WriteFileOption func(*WriteFileTool)
+
+// WriteFileWithEnvironment 注入执行环境（当前文件工具通过 bind mount 无需路由，预留扩展）。
+func WriteFileWithEnvironment(env sandbox.Environment) WriteFileOption {
+	return func(t *WriteFileTool) { t.env = env }
 }
 
 // NewWriteFileTool 创建绑定到指定工作区的文件写入工具。
 // workDir 会被 filepath.Clean 清洗，确保路径规范化（Path Normalization）。
-func NewWriteFileTool(workDir string) *WriteFileTool {
-	return &WriteFileTool{workDir: filepath.Clean(workDir)}
+func NewWriteFileTool(workDir string, opts ...WriteFileOption) *WriteFileTool {
+	t := &WriteFileTool{workDir: filepath.Clean(workDir)}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
 }
 
 // Name 返回工具标识符 "write_file"。
