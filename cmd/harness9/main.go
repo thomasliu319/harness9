@@ -148,6 +148,16 @@ Flags:
 		}
 		defer sandboxMgr.DestroyAll(ctx)
 	}
+	// SandboxBar 通知 channel：Sandbox 状态变化时发送快照给 TUI
+	sandboxNotifyCh := make(chan []sandbox.SandboxInfo, 8)
+	if sandboxMgr != nil {
+		sandboxMgr.WithUpdateNotify(func(infos []sandbox.SandboxInfo) {
+			select {
+			case sandboxNotifyCh <- infos:
+			default: // 丢弃：buffer 满时 TUI 仍持有旧快照，下次更新会覆盖
+			}
+		})
+	}
 	// ---- Sandbox 系统接线（续：工具注入见下）----
 
 	homeDir, err := os.UserHomeDir()
@@ -308,7 +318,7 @@ Flags:
 
 	if term.IsTerminal(os.Stdin.Fd()) {
 		log.Print(logfmt.FormatMsg("main", fmt.Sprintf("harness9 TUI 启动 │ workDir=%s", workDir)))
-		if err := RunTUI(ctx, eng, mgr, sess, skillsIndex, todoStore, subAgentTracker, subAgentReg, subAgentRunner, workDir, modelName); err != nil {
+		if err := RunTUI(ctx, eng, mgr, sess, skillsIndex, todoStore, subAgentTracker, subAgentReg, subAgentRunner, workDir, modelName, sandboxNotifyCh); err != nil {
 			log.Fatal(logfmt.FormatMsg("main", fmt.Sprintf("TUI 退出: %v", err)))
 		}
 	} else {
