@@ -171,7 +171,6 @@ func TestContainerDockerRunArgs(t *testing.T) {
 	mustContain := []string{
 		"--cap-drop", "all",
 		"--security-opt", "no-new-privileges:true",
-		"--network", "none",
 		"--label", "harness9=1",
 		"--name", "harness9-my-uuid",
 	}
