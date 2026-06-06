@@ -1,6 +1,6 @@
 # Sandbox 沙箱系统
 
-harness9 的 Sandbox 系统在 Docker 容器内运行所有工具调用，提供操作系统级隔离——独立进程空间、禁用网络、Capability 丢弃、资源配额——同时对 Agent 完全透明：启用前后工具接口不变，行为完全一致。
+harness9 的 Sandbox 系统在 Docker 容器内运行所有工具调用，提供操作系统级隔离——独立进程空间、Capability 丢弃、资源配额——同时对 Agent 完全透明：启用前后工具接口不变，行为完全一致。
 
 ---
 
@@ -118,7 +118,6 @@ Manager（单例）
 | `--cap-add DAC_OVERRIDE` | — | 仅恢复包管理器所需的最小能力 |
 | `--security-opt no-new-privileges:true` | — | 禁止 setuid 特权提升 |
 | `--pids-limit` | 256 | 防 fork bomb |
-| `--network none` | — | fail-closed，完全禁网 |
 | `--tmpfs /tmp` | 256m,nosuid,noexec,nodev | 临时目录隔离 |
 | bind mount | `workDir` | 宿主机与容器共享工作目录 |
 
