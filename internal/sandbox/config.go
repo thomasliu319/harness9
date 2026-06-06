@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"os"
+	"strings"
 	"time"
 )
 
@@ -29,7 +30,7 @@ type SandboxConfig struct {
 // DefaultConfig 从环境变量读取配置，未设置时使用内置安全默认值。
 func DefaultConfig() SandboxConfig {
 	return SandboxConfig{
-		Enabled:      os.Getenv("SANDBOX_ENABLED") != "false",
+		Enabled:      strings.ToLower(os.Getenv("SANDBOX_ENABLED")) != "false",
 		Image:        getenvOr("SANDBOX_IMAGE", "ubuntu:22.04"),
 		CPUs:         getenvOr("SANDBOX_CPUS", "1.0"),
 		Memory:       getenvOr("SANDBOX_MEMORY", "512m"),

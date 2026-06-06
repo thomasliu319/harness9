@@ -59,11 +59,25 @@ func TestDefaultConfig_FromEnv(t *testing.T) {
 }
 
 func TestDefaultConfig_DisabledWhenFalse(t *testing.T) {
-	t.Setenv("SANDBOX_ENABLED", "false")
+	cases := []string{"false", "False", "FALSE"}
+	for _, v := range cases {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv("SANDBOX_ENABLED", v)
+			if DefaultConfig().Enabled {
+				t.Errorf("SANDBOX_ENABLED=%q 时 Enabled 应为 false", v)
+			}
+		})
+	}
+}
 
-	cfg := DefaultConfig()
-
-	if cfg.Enabled {
-		t.Error("SANDBOX_ENABLED=false 时 Enabled 应为 false")
+func TestDefaultConfig_EnabledForNonFalseValues(t *testing.T) {
+	cases := []string{"0", "no", "1", "yes", "true"}
+	for _, v := range cases {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv("SANDBOX_ENABLED", v)
+			if !DefaultConfig().Enabled {
+				t.Errorf("SANDBOX_ENABLED=%q 时 Enabled 应为 true（仅 'false' 关闭）", v)
+			}
+		})
 	}
 }
