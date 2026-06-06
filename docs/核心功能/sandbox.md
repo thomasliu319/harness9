@@ -9,7 +9,6 @@ harness9 的 Sandbox 系统在 Docker 容器内运行所有工具调用，提供
 默认情况下，harness9 的工具（bash、read_file 等）直接在宿主进程中执行，没有容器级隔离。这对本地开发足够安全，但在以下场景需要更强的隔离：
 
 - Agent 执行不受信任的代码或脚本
-- 需要严格限制 Agent 的网络访问能力
 - 多用户共享同一台机器
 - 生产环境部署，需要资源配额保护
 
@@ -196,7 +195,7 @@ Sandbox 系统参考了主流框架的最佳实践：
 | 框架 | 借鉴点 |
 |------|--------|
 | HermesAgent | Docker 安全加固参数（cap-drop/no-new-privileges/pids-limit/tmpfs）、孤儿容器回收 |
-| OpenHarness | fail-closed 网络策略（`--network none`）、path_validator 路径校验 |
+| OpenHarness | path_validator 路径校验 |
 | OpenSandbox | 七状态生命周期模型（简化为五状态）、execd 通信模式（简化为 docker exec） |
 
 详见 [Sandbox 系统设计规格](https://github.com/ZhangShenao/harness9/blob/master/docs/%E8%AE%BE%E8%AE%A1%E8%A7%84%E6%A0%BC/2026-06-05-sandbox-design.md) 和 [调研报告](https://github.com/ZhangShenao/harness9/blob/master/docs/%E6%8A%80%E6%9C%AF%E8%B0%83%E7%A0%94/sandbox-design-research.md)。
