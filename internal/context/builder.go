@@ -23,6 +23,7 @@ type DefaultPromptBuilder struct {
 	todoEnabled    bool
 	offloadEnabled bool
 	ltmReader      func() string
+	sandboxEnabled bool
 }
 
 // NewPromptBuilder 创建绑定到指定工作目录和 Skills Index 的 PromptBuilder。
@@ -50,6 +51,13 @@ func (b *DefaultPromptBuilder) WithOffloadEnabled(enabled bool) *DefaultPromptBu
 // 仅在 LTM 启用时调用。
 func (b *DefaultPromptBuilder) WithLongTermMemory(reader func() string) *DefaultPromptBuilder {
 	b.ltmReader = reader
+	return b
+}
+
+// WithSandboxContext 启用 Sandbox 执行环境提示。
+// 当启用时，在 system prompt 中添加 Sandbox 特定指引，说明可用的环境能力。
+func (b *DefaultPromptBuilder) WithSandboxContext(enabled bool) *DefaultPromptBuilder {
+	b.sandboxEnabled = enabled
 	return b
 }
 
@@ -111,6 +119,16 @@ func (b *DefaultPromptBuilder) Build() string {
 				"- offset：起始字节位置（默认 0）\n"+
 				"- limit：读取字节数（默认 4096）\n"+
 				"示例：read_file({\"path\": \".harness9/tool_results/{sessionID}/{toolCallID}.txt\", \"offset\": 4096, \"limit\": 4096})",
+		)
+	}
+
+	// 5.5. Sandbox 执行环境提示（仅在启用 Sandbox 时注入）
+	if b.sandboxEnabled {
+		parts = append(parts,
+			"## Sandbox 执行环境\n\n"+
+				"你在 Docker 容器中执行，具有受控的操作系统级隔离。容器预装的工具有限，"+
+				"如需使用额外软件（如编译器、数据库工具等），请先使用 apt-get 安装。\n\n"+
+				"先安装后验证：许多编译或运行过程中需要的工具不在默认镜像中，请在尝试使用前主动检查并安装。",
 		)
 	}
 

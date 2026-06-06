@@ -108,3 +108,25 @@ func TestBuildSkipsEmptyLongTermMemory(t *testing.T) {
 		t.Error("空长期记忆不应注入标题段落")
 	}
 }
+
+func TestBuild_WithSandboxContext(t *testing.T) {
+	b := NewPromptBuilder(t.TempDir(), nil).WithSandboxContext(true)
+	out := b.Build()
+	if !strings.Contains(out, "Sandbox 执行环境") {
+		t.Error("启用 Sandbox 时 system prompt 应包含 Sandbox 执行环境 Section")
+	}
+	if !strings.Contains(out, "apt-get") {
+		t.Error("Sandbox Section 应提示可用 apt-get 安装工具")
+	}
+	if !strings.Contains(out, "先安装后验证") {
+		t.Error("Sandbox Section 应明确要求先安装缺失工具再验证")
+	}
+}
+
+func TestBuild_WithoutSandboxContext(t *testing.T) {
+	b := NewPromptBuilder(t.TempDir(), nil)
+	out := b.Build()
+	if strings.Contains(out, "Sandbox 执行环境") {
+		t.Error("未启用 Sandbox 时 system prompt 不应包含 Sandbox 执行环境 Section")
+	}
+}
