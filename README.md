@@ -2,8 +2,6 @@
 
 **Local-First · 轻量级 · 功能完备 · 生产可用的通用 Agent 框架**
 
-[![Visitors](https://visitor-badge.laobi.icu/badge?page_id=ZhangShenao.harness9)](https://github.com/ZhangShenao/harness9)
-
 ---
 
 ![harness9 欢迎界面](welcome.png)
@@ -414,6 +412,8 @@ harness9/
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=ZhangShenao/harness9&type=Date)](https://star-history.com/#ZhangShenao/harness9&Date)
+
+![visitors](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2FZhangShenao%2Fharness9&count_bg=%230079C7&title_bg=%23555555&title=visitors&edge_flat=false)
 
 ---
 
