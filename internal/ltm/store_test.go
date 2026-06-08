@@ -286,3 +286,46 @@ func TestStoreSoftDeleteNotFound(t *testing.T) {
 		t.Fatal("SoftDelete 不存在的 ID 应返回错误")
 	}
 }
+
+// TestStorePurgeExpiredReleasesSignature 验证 PurgeExpired 将过期记忆的 signature 置为 NULL，
+// 使相同内容在过期后可以被重新添加（不触发 UNIQUE 约束冲突）。
+// 修复前：PurgeExpired 仅设 disabled=1，保留 signature，导致 Add 时签名去重仍命中已禁用行。
+func TestStorePurgeExpiredReleasesSignature(t *testing.T) {
+	s, now := newTestStore(t)
+	ctx := context.Background()
+
+	// 48 小时前写入，TTL=1 天 → 现在已过期
+	s.now = func() time.Time { return now.Add(-48 * time.Hour) }
+	e, err := s.Add(ctx, &Entry{Title: "过期条目", Content: "过期后可复活的内容", TTLDays: 1})
+	if err != nil {
+		t.Fatalf("首次 Add: %v", err)
+	}
+
+	// 恢复到「现在」，执行回收
+	s.now = func() time.Time { return *now }
+	n, err := s.PurgeExpired(ctx)
+	if err != nil {
+		t.Fatalf("PurgeExpired: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("期望回收 1 条，got %d", n)
+	}
+
+	// 确认已被标记为 disabled
+	got, _ := s.Get(ctx, e.ID)
+	if !got.Disabled {
+		t.Fatal("PurgeExpired 应将条目标记为 disabled")
+	}
+
+	// 核心断言：使用相同内容重新 Add，不应触发 UNIQUE 冲突，应得到新的活跃条目
+	second, err := s.Add(ctx, &Entry{Title: "新标题", Content: "过期后可复活的内容", TTLDays: 0})
+	if err != nil {
+		t.Fatalf("PurgeExpired 后重新 Add 不应报错（signature 应已被清除）: %v", err)
+	}
+	if second.ID == e.ID {
+		t.Error("PurgeExpired 后重新 Add 应创建新条目，而非命中已过期的 disabled 条目")
+	}
+	if second.Disabled {
+		t.Error("重新添加的条目不应是 disabled 状态")
+	}
+}

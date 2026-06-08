@@ -77,6 +77,10 @@ func (r *HookRegistry) Execute(ctx context.Context, call schema.ToolCall) schema
 			// 规则显式放行（如白名单命中），标记为 explicitly-allowed。
 			// 使用独立 key 区别于用户实时审批（withApproved），保留两类来源的可追溯性。
 			// 不 fallthrough，Go switch 默认不 fallthrough。
+			// 应用 ModifiedArgs（若 hook 同时携带了参数重写，例如路径沙箱归一化）。
+			if dec.ModifiedArgs != nil {
+				call.Arguments = dec.ModifiedArgs
+			}
 			newCtx = withExplicitlyAllowed(newCtx)
 		case HookActionAsk:
 			// 若此工具调用已被人类审批或规则显式放行，直接视为 Allow，不再弹出对话框。

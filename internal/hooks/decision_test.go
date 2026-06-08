@@ -31,3 +31,30 @@ func TestApprovalFnFromContext_NilWhenAbsent(t *testing.T) {
 		t.Error("expected nil ApprovalFunc when not set")
 	}
 }
+
+// TestDecisionConstructors 验证 Allow/Deny/Ask 快捷构造函数的字段设置正确。
+func TestDecisionConstructors(t *testing.T) {
+	a := hooks.Allow()
+	if a.Action != hooks.HookActionAllow {
+		t.Errorf("Allow().Action = %q, want %q", a.Action, hooks.HookActionAllow)
+	}
+
+	d := hooks.Deny("blocked")
+	if d.Action != hooks.HookActionDeny {
+		t.Errorf("Deny().Action = %q, want %q", d.Action, hooks.HookActionDeny)
+	}
+	if d.Reason != "blocked" {
+		t.Errorf("Deny().Reason = %q, want %q", d.Reason, "blocked")
+	}
+
+	ask := hooks.Ask("risky", "high")
+	if ask.Action != hooks.HookActionAsk {
+		t.Errorf("Ask().Action = %q, want %q", ask.Action, hooks.HookActionAsk)
+	}
+	if ask.Reason != "risky" {
+		t.Errorf("Ask().Reason = %q, want %q", ask.Reason, "risky")
+	}
+	if ask.RiskLevel != "high" {
+		t.Errorf("Ask().RiskLevel = %q, want %q", ask.RiskLevel, "high")
+	}
+}

@@ -349,18 +349,22 @@ func NewTokenBudgetCompactor(contextWindow int) *TokenBudgetCompactor {
 
 1. 若 len(msgs) ≤ MaxMessages，直接返回原切片（无需压缩）
 2. 计算窗口起点：startIdx = len(msgs) - MaxMessages + 1
-3. 【边界修正】向前回溯孤立的 Observation：
+3. 【边界修正 A】向前回溯孤立的 Observation：
    while startIdx > 1 AND msgs[startIdx].ToolCallID != "" {
        startIdx--
    }
-4. 返回：[msgs[0]] + msgs[startIdx:]
+4. 组合：candidate = [msgs[0]] + msgs[startIdx:]
+5. 【边界修正 B】调用 repairOrphanedToolPairs 双向修复（见 6.4）
+6. 返回修复结果
 ```
 
 `SlidingWindowCompactor` 不感知 token 用量，适合快速原型场景，生产环境推荐使用 `SummarizationCompactor`。
 
+> **注意：** 步骤 3（向前回溯）只能处理"窗口起点恰好切在 Observation 中间"的情况（A 类孤立）。若窗口保留了一个带 ToolCalls 的 assistant 消息但其对应 tool_result 被截掉（B 类孤立），则需步骤 5 的双向修复兜底。
+
 ### 6.4 孤立工具对修复（repairOrphanedToolPairs）
 
-TokenBudgetCompactor 在截断后，尾部切片可能存在两类孤立消息，需要修复：
+`TokenBudgetCompactor` 和 `SlidingWindowCompactor` 在截断后均调用此函数，处理两类孤立消息：
 
 **类型 A：孤立 tool_result**（有 `ToolCallID` 但无对应 `ToolCalls` 消息）
 
@@ -423,7 +427,7 @@ func repairOrphanedToolPairs(msgs []schema.Message) []schema.Message {
 
 **为什么需要双向修复？**
 
-LLM API（尤其是 Anthropic Messages API）要求 tool_call / tool_result 必须配对出现。若截断后出现孤立消息，API 调用会报 400 错误。SlidingWindowCompactor 通过向前回溯只能处理类型 A，无法处理类型 B。TokenBudgetCompactor 使用更完整的双向修复。
+LLM API（尤其是 Anthropic Messages API）要求 tool_call / tool_result 必须配对出现。若截断后出现孤立消息，API 调用会报 400 错误。`TokenBudgetCompactor` 和 `SlidingWindowCompactor` 均调用 `repairOrphanedToolPairs`，提供完整双向修复保障。
 
 ---
 

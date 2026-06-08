@@ -56,6 +56,21 @@ func newInnerWithEcho(t *testing.T) tools.Registry {
 	return reg
 }
 
+// capturingTool 是测试用工具，将 Execute 收到的参数记录到外部指针。
+type capturingTool struct {
+	name    string
+	capture *[]byte
+}
+
+func (c *capturingTool) Name() string { return c.name }
+func (c *capturingTool) Definition() schema.ToolDefinition {
+	return schema.ToolDefinition{Name: c.name}
+}
+func (c *capturingTool) Execute(_ context.Context, args json.RawMessage) (string, error) {
+	*c.capture = append([]byte(nil), args...)
+	return "captured", nil
+}
+
 func TestHookRegistry_NoHooks_PassThrough(t *testing.T) {
 	inner := newInnerWithEcho(t)
 	hr := hooks.NewHookRegistry(inner)
@@ -181,6 +196,59 @@ func TestHookRegistry_BeforeAsk_WithApprovalFn_Allow(t *testing.T) {
 	result := hr.Execute(ctx, schema.ToolCall{Name: "echo", ID: "8"})
 	if result.IsError {
 		t.Fatalf("expected success when user approves: %s", result.Output)
+	}
+}
+
+// TestHookRegistry_AllowWithModifiedArgs 验证 HookActionAllow 携带 ModifiedArgs 时参数被正确应用。
+// 场景：路径沙箱 hook 显式放行并重写参数，内层工具应收到重写后的参数。
+func TestHookRegistry_AllowWithModifiedArgs(t *testing.T) {
+	var receivedArgs []byte
+	inner := tools.NewRegistry()
+	captureTool := &capturingTool{name: "echo", capture: &receivedArgs}
+	if err := inner.Register(captureTool); err != nil {
+		t.Fatal(err)
+	}
+
+	modifiedArgs := []byte(`{"command":"safe-cmd"}`)
+	allowHook := &recordHook{
+		id:  "rewriter",
+		log: new([]string),
+		beforeDec: hooks.HookDecision{
+			Action:       hooks.HookActionAllow,
+			ModifiedArgs: modifiedArgs,
+		},
+	}
+	hr := hooks.NewHookRegistry(inner, allowHook)
+	hr.Execute(context.Background(), schema.ToolCall{
+		Name:      "echo",
+		ID:        "10",
+		Arguments: []byte(`{"command":"dangerous-cmd"}`),
+	})
+	if string(receivedArgs) != string(modifiedArgs) {
+		t.Errorf("tool received args %q, want %q", receivedArgs, modifiedArgs)
+	}
+}
+
+// TestHookRegistry_AskApprovedOnce 验证：同一工具调用已由人类审批后，后续相同的 Ask hook 不再弹框。
+// 场景：两个 Ask hook 串联，第一个触发审批（通过），第二个应检测到 withApproved 标记而跳过。
+func TestHookRegistry_AskApprovedOnce(t *testing.T) {
+	inner := newInnerWithEcho(t)
+	var log []string
+	askHook1 := &recordHook{id: "ask1", log: &log, beforeDec: hooks.Ask("risky1", "high")}
+	askHook2 := &recordHook{id: "ask2", log: &log, beforeDec: hooks.Ask("risky2", "medium")}
+	hr := hooks.NewHookRegistry(inner, askHook1, askHook2)
+
+	callCount := 0
+	ctx := hooks.WithApprovalFn(context.Background(), func(_ context.Context, _ schema.ToolCall, _, _ string) hooks.ApprovalResponse {
+		callCount++
+		return hooks.ApprovalResponse{Approved: true}
+	})
+	result := hr.Execute(ctx, schema.ToolCall{Name: "echo", ID: "11"})
+	if result.IsError {
+		t.Fatalf("expected success: %s", result.Output)
+	}
+	if callCount != 1 {
+		t.Errorf("ApprovalFunc called %d times, expected 1 (second ask should be deduped)", callCount)
 	}
 }
 
