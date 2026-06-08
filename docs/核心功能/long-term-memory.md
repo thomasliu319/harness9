@@ -153,7 +153,7 @@ type Entry struct {
 | `Update(ctx, *Entry) error` | 按 `ID` 更新字段，重算 `signature`，事务内重建 FTS 索引 |
 | `SoftDelete(ctx, id) error` | 置 `disabled=1`、`signature=NULL`（释放 UNIQUE 槽位），移出 FTS |
 | `List(ctx, limit) ([]*Entry, error)` | 返回未删除、未过期条目，按 `importance DESC, updated_at DESC` 排序，供 Precis 渲染 |
-| `PurgeExpired(ctx) (int, error)` | 批量软删除已超 TTL 的条目，同步清理 FTS，返回回收数 |
+| `PurgeExpired(ctx) (int, error)` | 批量软删除已超 TTL 的条目（置 `disabled=1`、`signature=NULL`），同步清理 FTS，返回回收数 |
 | `StaleCandidates(ctx) ([]*Entry, error)` | 识别清理候选：`importance<=1 AND use_count=0 AND 60 天未更新` |
 
 ---

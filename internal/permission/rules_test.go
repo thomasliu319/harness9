@@ -90,3 +90,69 @@ func TestLoadRules_MissingFile_ReturnsEmpty(t *testing.T) {
 		t.Fatal("LoadRules should return non-nil Rules even for missing file")
 	}
 }
+
+func TestLoadRules_InvalidJSON_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.json")
+	if err := os.WriteFile(path, []byte("{invalid json}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := permission.LoadRules(path)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestSaveRules_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	r := permission.NewRules()
+	r.AddRule(permission.RuleAllow, []string{"bash(git *)", "read_file"})
+	r.AddRule(permission.RuleDeny, []string{"bash(rm -rf *)"})
+
+	if err := permission.SaveRules(path, r); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := permission.LoadRules(path)
+	if err != nil {
+		t.Fatalf("LoadRules after SaveRules: %v", err)
+	}
+	// deny 规则在 LoadRules 中优先
+	if got := loaded.Evaluate("bash", "rm -rf /tmp"); got != permission.RuleDeny {
+		t.Errorf("expected deny after round-trip, got %s", got)
+	}
+	if got := loaded.Evaluate("bash", "git log"); got != permission.RuleAllow {
+		t.Errorf("expected allow after round-trip, got %s", got)
+	}
+}
+
+// TestGlobContains_Patterns 覆盖 matchPattern / globContains 的各类匹配路径：
+// 尾部星号快捷路径、精确工具名、大小写不敏感、空括号。
+func TestGlobContains_Patterns(t *testing.T) {
+	cases := []struct {
+		pattern string
+		tool    string
+		arg     string
+		want    string
+	}{
+		// 尾部星号快捷路径
+		{"bash(git *)", "bash", "git commit -m 'test'", permission.RuleAllow},
+		// 精确工具名匹配（无括号）
+		{"read_file", "read_file", "anything", permission.RuleAllow},
+		// 工具名大小写不敏感
+		{"READ_FILE", "read_file", "", permission.RuleAllow},
+		// 空括号等价于仅匹配工具名
+		{"bash()", "bash", "", permission.RuleAllow},
+	}
+
+	for _, tc := range cases {
+		r := permission.NewRules()
+		r.AddRule(permission.RuleAllow, []string{tc.pattern})
+		got := r.Evaluate(tc.tool, tc.arg)
+		if got != tc.want {
+			t.Errorf("pattern=%q tool=%q arg=%q: got %s, want %s", tc.pattern, tc.tool, tc.arg, got, tc.want)
+		}
+	}
+}

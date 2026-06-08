@@ -128,8 +128,14 @@ type ToolHook interface {
 
 - `error` → 立即短路，返回 `IsError=true`
 - `HookActionDeny` → 立即拒绝，跳过后续 hook 和所有 `AfterExecute`
-- `HookActionAsk` → 查找 context 中的 `ApprovalFunc`；若已批准（前置 hook 已审批）则跳过重复弹框；若无 `ApprovalFunc`（非交互模式）则视为 Allow
-- `HookActionAllow` → 继续
+- `HookActionAsk` → 查找 context 中的 `ApprovalFunc`；若已被人类审批（`withApproved`）**或**已被规则显式放行（`withExplicitlyAllowed`）则跳过重复弹框；若无 `ApprovalFunc`（非交互模式）则视为 Allow
+- `HookActionAllow` → 在 context 中设置 `withExplicitlyAllowed` 标记（使后续 hook 的 Ask 跳过审批），并应用 `ModifiedArgs`（若 hook 携带了参数重写）
+
+**两种"已放行"标记的语义区分：**
+- `withApproved`（`approvedContextKey`）：用户在审批对话框中实时点击"允许"后设置，表示人类介入批准
+- `withExplicitlyAllowed`（`explicitlyAllowedContextKey`）：前置 hook 根据规则静默放行（如白名单命中）后设置，无需人类介入
+
+两个标记在 `HookActionAsk` 的检测逻辑中等价（均跳过审批），但保留独立 key 确保来源可追溯。
 
 `AfterExecute` 仅对已完成 `BeforeExecute` 的 hook 逆序调用（`executed` 计数器保证）。
 
@@ -333,3 +339,11 @@ hookReg := hooks.NewHookRegistry(registry, permHook, dangerHook, &MyAuditHook{},
 - 白名单写入时取命令第一个单词生成模式（如 `bash(*mkdir*)`），可能比预期宽松
 - `bash` 工具不经过 `safePath`，复杂 shell 脚本可能绕过 `DangerHook` 的字符串匹配
 - `settings.json` 中 `ask` 列表触发的审批对话框风险级别固定为"中等风险"（橙色），无法在配置中按规则指定 `high`/`low`；`DangerHook` 自身可区分高/中风险级别
+
+## Bug 修复记录
+
+**2026-06-08 白名单写入后仍重复弹出审批**（`self-dev` 分支）
+
+**根因：** `PermissionHook` 返回 `HookActionAllow`（白名单命中）时，原实现未在 context 中记录"已放行"标记。后续 `DangerHook` 检测到危险模式仍返回 `HookActionAsk`，此时 context 中无任何批准标记，导致审批对话框被二次触发。
+
+**修复：** 新增独立的 `explicitlyAllowedContextKey`（区别于人类审批的 `approvedContextKey`），`HookActionAllow` 时写入此 key；`HookActionAsk` 检测逻辑同时检查两个 key，任意一个置位则跳过审批。

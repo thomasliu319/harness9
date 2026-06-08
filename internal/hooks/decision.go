@@ -68,7 +68,7 @@ func ApprovalFnFromContext(ctx context.Context) ApprovalFunc {
 
 type approvedContextKey struct{}
 
-// withApproved 在 context 中标记当前工具调用已由前置 hook 经过人类审批。
+// withApproved 在 context 中标记当前工具调用已由前置 hook 经过人类审批（用户点击"允许"）。
 // 后续的 HookActionAsk hook 检查到此标记后直接跳过，避免对同一次工具调用重复弹出审批对话框。
 func withApproved(ctx context.Context) context.Context {
 	return context.WithValue(ctx, approvedContextKey{}, true)
@@ -77,5 +77,20 @@ func withApproved(ctx context.Context) context.Context {
 // isApproved 报告当前工具调用是否已在前置 hook 中获得人类审批。
 func isApproved(ctx context.Context) bool {
 	v, _ := ctx.Value(approvedContextKey{}).(bool)
+	return v
+}
+
+type explicitlyAllowedContextKey struct{}
+
+// withExplicitlyAllowed 在 context 中标记当前工具调用已被前置 hook 规则显式放行（如白名单命中）。
+// 语义上区别于 withApproved（人类实时审批）：此处是规则系统的静默放行，无需人类介入。
+// 后续 HookActionAsk hook 遇到此标记同样跳过审批，避免白名单写入后仍被危险模式拦截的问题。
+func withExplicitlyAllowed(ctx context.Context) context.Context {
+	return context.WithValue(ctx, explicitlyAllowedContextKey{}, true)
+}
+
+// isExplicitlyAllowed 报告当前工具调用是否已被前置 hook 规则显式放行。
+func isExplicitlyAllowed(ctx context.Context) bool {
+	v, _ := ctx.Value(explicitlyAllowedContextKey{}).(bool)
 	return v
 }

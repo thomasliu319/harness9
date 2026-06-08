@@ -135,6 +135,80 @@ func TestSlidingWindow_NoSystemMessage(t *testing.T) {
 	}
 }
 
+// TestSlidingWindow_BTypeOrphan_ToolCallWithoutResult 验证 B 类孤立修复：
+// 窗口内保留了 assistant(tool_call)，但其 tool_result 被截出窗口，
+// repairOrphanedToolPairs 应插入占位 tool_result，避免 Anthropic API 400。
+//
+// 布局（6条消息）：
+//
+//	[sys, user_old, assistant(tc_done), result(tc_done), assistant(tc_pending), user_latest]
+//
+// MaxMessages=3 → startIdx=4 → msgs[4]=assistant(tc_pending)，ToolCallID=""，停止回溯
+// 窗口：[sys, assistant(tc_pending), user_latest]
+// tc_pending 有 ToolCall 但无 result → B 类孤立 → repair 插入占位
+func TestSlidingWindow_BTypeOrphan_ToolCallWithoutResult(t *testing.T) {
+	input := []schema.Message{
+		{Role: schema.RoleSystem, Content: "sys"},
+		{Role: schema.RoleUser, Content: "user old"},
+		{Role: schema.RoleAssistant, ToolCalls: []schema.ToolCall{{ID: "tc_done", Name: "read_file"}}},
+		{Role: schema.RoleUser, ToolCallID: "tc_done", Content: "file contents"},
+		// 窗口起点：assistant 尚未得到 result（对话在此轮被截断）
+		{Role: schema.RoleAssistant, ToolCalls: []schema.ToolCall{{ID: "tc_pending", Name: "bash"}}},
+		{Role: schema.RoleUser, Content: "user_latest"},
+	}
+	c := &memory.SlidingWindowCompactor{MaxMessages: 3}
+	got := c.Compact(input)
+
+	// 断言：窗口内每个 tool_call 都有对应的 tool_result（修复前会缺失 tc_pending 的结果）
+	calledIDs := map[string]bool{}
+	resultIDs := map[string]bool{}
+	for _, m := range got {
+		for _, tc := range m.ToolCalls {
+			calledIDs[tc.ID] = true
+		}
+		if m.ToolCallID != "" {
+			resultIDs[m.ToolCallID] = true
+		}
+	}
+	for id := range calledIDs {
+		if !resultIDs[id] {
+			t.Errorf("B 类孤立未修复：tool_call %q 在压缩窗口中无对应 tool_result（会触发 Anthropic API 400）", id)
+		}
+	}
+}
+
+// TestSlidingWindow_ATypeOrphan_ToolResultWithoutCall 验证 A 类孤立修复：
+// 向前回溯逻辑（backward scan）遇到非 tool_result 消息即停止，
+// 导致 result 落入窗口但其 call 仍在 head 中，repairOrphanedToolPairs 应删除该孤立 result。
+//
+// 布局（5条消息）：
+//
+//	[sys, assistant(tc_a), user_middle, result(tc_a), user_latest]
+//
+// MaxMessages=3 → startIdx=3 → msgs[3]=result(tc_a)，ToolCallID="tc_a" → 回溯
+// → startIdx=2 → msgs[2]=user_middle，ToolCallID=""，停止
+// 窗口：[sys, user_middle, result(tc_a), user_latest]
+// result(tc_a) 的 call 不在窗口 → A 类孤立 → repair 删除 result(tc_a)
+func TestSlidingWindow_ATypeOrphan_ToolResultWithoutCall(t *testing.T) {
+	input := []schema.Message{
+		{Role: schema.RoleSystem, Content: "sys"},
+		{Role: schema.RoleAssistant, ToolCalls: []schema.ToolCall{{ID: "tc_a", Name: "bash"}}},
+		// user_middle 打断了 call-result 的紧邻关系，backward scan 止于此
+		{Role: schema.RoleUser, Content: "user_middle"},
+		{Role: schema.RoleUser, ToolCallID: "tc_a", Content: "bash ok"},
+		{Role: schema.RoleUser, Content: "user_latest"},
+	}
+	c := &memory.SlidingWindowCompactor{MaxMessages: 3}
+	got := c.Compact(input)
+
+	// 断言：孤立的 result(tc_a) 应被 repair 删除，否则 Anthropic API 会报 400
+	for _, m := range got {
+		if m.ToolCallID == "tc_a" {
+			t.Error("A 类孤立未修复：tool_result tc_a 的 call 不在压缩窗口，应被 repairOrphanedToolPairs 删除")
+		}
+	}
+}
+
 // --- TokenBudgetCompactor tests ---
 
 func longContent(chars int) string {

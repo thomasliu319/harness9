@@ -48,7 +48,10 @@ func (c *SlidingWindowCompactor) Compact(msgs []schema.Message) []schema.Message
 	result := make([]schema.Message, 0, len(msgs)-startIdx+1)
 	result = append(result, msgs[0]) // system 始终保留
 	result = append(result, msgs[startIdx:]...)
-	return result
+	// 窗口边界可能裁掉 assistant 工具调用请求而保留其结果（或反之），
+	// 导致 Anthropic API 400（tool_call/tool_result 必须成对）。
+	// 调用 repairOrphanedToolPairs 执行双向修复，与 TokenBudgetCompactor 保持一致。
+	return repairOrphanedToolPairs(result)
 }
 
 // TokenBudgetCompactor 基于 token 预算（字符数÷4 估算）而非消息条数进行上下文裁剪。

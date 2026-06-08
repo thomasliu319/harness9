@@ -305,17 +305,23 @@ func (s *Store) List(ctx context.Context, limit int) ([]*Entry, error) {
 }
 
 // PurgeExpired 将所有已过 TTL 的未删除记忆软删除，返回回收条数。
+// 同时将 signature 置为 NULL（与 SoftDelete 一致），释放唯一约束槽位，
+// 使相同内容在未来可以重新被添加（否则 Add 的签名去重会将其视为既有记录）。
 func (s *Store) PurgeExpired(ctx context.Context) (int, error) {
 	nowUnix := s.now().Unix()
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE long_term_memories SET disabled = 1
+		`UPDATE long_term_memories SET disabled = 1, signature = NULL
 		 WHERE disabled = 0 AND ttl_days IS NOT NULL AND updated_at + ttl_days * 86400 < ?`, nowUnix)
 	if err != nil {
 		return 0, fmt.Errorf("回收过期记忆: %w", err)
 	}
-	// 同步清理 FTS（被回收条目移出索引）。
+	// 同步清理 FTS：仅删除本次刚被回收的条目（与 UPDATE 条件保持一致，避免扫描全量历史软删除行）。
 	if _, err := s.db.ExecContext(ctx,
-		`DELETE FROM memories_fts WHERE id IN (SELECT id FROM long_term_memories WHERE disabled = 1)`); err != nil {
+		`DELETE FROM memories_fts WHERE id IN (
+			SELECT id FROM long_term_memories
+			WHERE disabled = 1 AND signature IS NULL AND ttl_days IS NOT NULL
+			  AND updated_at + ttl_days * 86400 < ?
+		)`, nowUnix); err != nil {
 		return 0, fmt.Errorf("清理 fts: %w", err)
 	}
 	n, _ := res.RowsAffected()

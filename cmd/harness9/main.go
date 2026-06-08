@@ -237,9 +237,9 @@ Flags:
 
 	modelLimits := provider.GetModelLimits(modelName)
 
-	// agentMaxTurns 是主代理与子代理共用的最大 Turn 数：子代理与主代理保持一致，
-	// 避免子代理过早因 Turn 上限失败（同时显式化主代理的轮数，不再依赖引擎默认值）。
-	const agentMaxTurns = 50
+	// agentMaxTurns 是子代理的最大 Turn 数。
+	// 主代理依赖引擎默认值（engine.NewAgentEngine 内置 500），两者保持一致，无需重复声明。
+	const agentMaxTurns = 500
 
 	// ---- Sub-Agent 系统接线 ----
 	// 子代理可用的基础工具实例（独立实例，沙箱根目录同为 workDir）。
@@ -319,7 +319,6 @@ Flags:
 		engine.WithCompactor(compactor),
 		engine.WithContextWindow(modelLimits.ContextTokens),
 		engine.WithTodoStore(todoStore),
-		engine.WithMaxTurns(agentMaxTurns),
 		engine.WithMemoryNudge(10, "如果本轮对话中出现了值得跨会话长期保留的信息（用户偏好、稳定的项目知识、关键决策、可复用技能），请调用 memory_write 工具记录；否则忽略此提示。"),
 	)
 
