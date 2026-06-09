@@ -147,7 +147,7 @@ Flags:
 	var llm provider.LLMProvider = rawLLM
 
 	// 将 llm 包装为 TracingProvider（为 LLM 调用创建 OTEL Span）
-	if tp, tpErr := observability.NewTracingProvider(llm, otelProviders); tpErr != nil {
+	if tp, tpErr := observability.NewTracingProvider(llm, otelProviders, modelName); tpErr != nil {
 		log.Print(logfmt.FormatMsg("main", fmt.Sprintf("TracingProvider 创建失败（使用原始 provider）: %v", tpErr)))
 	} else {
 		llm = tp

@@ -38,16 +38,17 @@ func NewOTELEngineObserver(p *Providers) (*OTELEngineObserver, error) {
 	return &OTELEngineObserver{tracer: p.Tracer, turnsTotal: turns}, nil
 }
 
-// OnInteractionStart 启动顶层 interaction Span，注入 session.id 属性，将 Span 存入 ctx。
+// OnInteractionStart 启动顶层 interaction Span，注入 session.id 和初始 prompt 属性。
 // 同时通过 trace.ContextWithSpan 将 Span 显式写入 OTEL span slot，
 // 确保后续 tracer.Start 调用能正确获取父 Span。
 func (o *OTELEngineObserver) OnInteractionStart(ctx context.Context, sessionID, prompt string) context.Context {
 	ctx, span := o.tracer.Start(ctx, SpanInteraction,
 		trace.WithAttributes(attribute.String(AttrSessionID, sessionID)),
 	)
+	// langfuse.input：用户的初始 prompt，展示在 Langfuse Interaction 的 Input 字段。
+	span.SetAttributes(attribute.String(AttrLangfuseInput, truncateAttr(prompt)))
 	// 将 span 同时存入自定义 key（供 OnInteractionEnd 取用）
 	// 和 OTEL 标准 slot（供下级 tracer.Start 自动寻找父节点）。
-	// trace.ContextWithSpan 是显式写入，不依赖 tracer.Start 内部行为。
 	ctx = trace.ContextWithSpan(ctx, span)
 	return context.WithValue(ctx, interactionSpanKey{}, span)
 }

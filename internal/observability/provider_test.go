@@ -31,7 +31,7 @@ func TestTracingProvider_Generate_Success(t *testing.T) {
 	mock := providertest.NewMockWithCallback(func(_ []schema.Message, _ []schema.ToolDefinition) schema.Message {
 		return schema.Message{Role: schema.RoleAssistant, Content: "done"}
 	})
-	tp, err := observability.NewTracingProvider(mock, p)
+	tp, err := observability.NewTracingProvider(mock, p, "")
 	if err != nil {
 		t.Fatalf("NewTracingProvider: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestTracingProvider_Generate_Error(t *testing.T) {
 	p := observability.NewNoopProviders()
 
 	inner := &errorProvider{err: errors.New("api error")}
-	tp, err := observability.NewTracingProvider(inner, p)
+	tp, err := observability.NewTracingProvider(inner, p, "")
 	if err != nil {
 		t.Fatalf("NewTracingProvider: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestTracingProvider_GenerateStream_Success(t *testing.T) {
 	mock := providertest.NewMockWithCallback(func(_ []schema.Message, _ []schema.ToolDefinition) schema.Message {
 		return schema.Message{Role: schema.RoleAssistant, Content: "streamed"}
 	})
-	tp, err := observability.NewTracingProvider(mock, p)
+	tp, err := observability.NewTracingProvider(mock, p, "")
 	if err != nil {
 		t.Fatalf("NewTracingProvider: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestTracingProvider_GenerateStream_Error(t *testing.T) {
 	p := observability.NewNoopProviders()
 
 	inner := &errorProvider{err: errors.New("stream error")}
-	tp, err := observability.NewTracingProvider(inner, p)
+	tp, err := observability.NewTracingProvider(inner, p, "")
 	if err != nil {
 		t.Fatalf("NewTracingProvider: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestTracingProvider_Generate_WithUsage(t *testing.T) {
 		msg:   schema.Message{Role: schema.RoleAssistant, Content: "ok"},
 		usage: &schema.Usage{InputTokens: 100, OutputTokens: 50},
 	}
-	tp, err := observability.NewTracingProvider(inner, p)
+	tp, err := observability.NewTracingProvider(inner, p, "")
 	if err != nil {
 		t.Fatalf("NewTracingProvider: %v", err)
 	}

@@ -13,21 +13,21 @@ import (
 	"github.com/harness9/internal/schema"
 )
 
-// TracingProvider 包装 LLMProvider，为每次调用创建 OTEL Span 并记录 Token Metrics。
+// TracingProvider 包装 LLMProvider，为每次调用创建 OTEL Span 并写入完整的
+// input/output/token/model 属性，使 Langfuse 能展示对话内容和 Token 用量。
 // 实现 provider.LLMProvider 接口，对引擎层完全透明。
 type TracingProvider struct {
 	inner          provider.LLMProvider
 	tracer         trace.Tracer
+	modelName      string // gen_ai.request.model 属性值，来自启动配置
 	llmDuration    metric.Float64Histogram
 	tokensInTotal  metric.Int64Counter
 	tokensOutTotal metric.Int64Counter
 }
 
-// NewTracingProvider 构造 TracingProvider，初始化三个 metrics 仪器：
-//   - MetricLLMDuration（histogram，秒）
-//   - MetricTokensInput（counter）
-//   - MetricTokensOutput（counter）
-func NewTracingProvider(inner provider.LLMProvider, p *Providers) (*TracingProvider, error) {
+// NewTracingProvider 构造 TracingProvider，初始化三个 metrics 仪器。
+// modelName 对应 gen_ai.request.model 属性，用于 Langfuse 模型展示。
+func NewTracingProvider(inner provider.LLMProvider, p *Providers, modelName string) (*TracingProvider, error) {
 	llmDuration, err := p.Meter.Float64Histogram(
 		MetricLLMDuration,
 		metric.WithDescription("LLM 请求耗时（秒）"),
@@ -56,6 +56,7 @@ func NewTracingProvider(inner provider.LLMProvider, p *Providers) (*TracingProvi
 	return &TracingProvider{
 		inner:          inner,
 		tracer:         p.Tracer,
+		modelName:      modelName,
 		llmDuration:    llmDuration,
 		tokensInTotal:  tokensInTotal,
 		tokensOutTotal: tokensOutTotal,
@@ -63,23 +64,34 @@ func NewTracingProvider(inner provider.LLMProvider, p *Providers) (*TracingProvi
 }
 
 // Generate 阻塞式 LLM 调用，用 SpanLLMRequest Span 包裹完整请求周期。
-// Span 在 inner.Generate 返回后立即结束，并记录 token 用量 metrics。
+// 在 Span 上写入：
+//   - langfuse.input  = 序列化的消息列表（Langfuse Input 字段）
+//   - langfuse.output = LLM 响应文本或工具调用（Langfuse Output 字段）
+//   - gen_ai.request.model / gen_ai.usage.input_tokens / gen_ai.usage.output_tokens
 func (p *TracingProvider) Generate(ctx context.Context, messages []schema.Message, tools []schema.ToolDefinition) (*schema.Message, *schema.Usage, error) {
 	ctx, span := p.tracer.Start(ctx, SpanLLMRequest)
 	defer span.End()
 
+	p.setInputAttrs(span, messages)
+
 	start := time.Now()
 	msg, usage, err := p.inner.Generate(ctx, messages, tools)
-	p.recordMetrics(ctx, span, usage, time.Since(start).Seconds(), err)
+	dur := time.Since(start).Seconds()
+
+	if msg != nil && err == nil {
+		span.SetAttributes(attribute.String(AttrLangfuseOutput, serializeOutput(msg)))
+	}
+	p.recordMetrics(ctx, span, usage, dur, err)
 	return msg, usage, err
 }
 
 // GenerateStream 流式 LLM 调用，Span 在 channel 关闭后结束。
-// goroutine 从 inner channel 消费 chunk，从 StreamChunkDone 中提取 Usage，
-// 最终在 channel 关闭时调用 recordMetrics 并结束 Span。
+// langfuse.input 在流开始前写入；langfuse.output 在 StreamChunkDone 后写入。
 func (p *TracingProvider) GenerateStream(ctx context.Context, messages []schema.Message, tools []schema.ToolDefinition) (<-chan schema.StreamChunk, error) {
 	ctx, span := p.tracer.Start(ctx, SpanLLMRequest)
 	start := time.Now()
+
+	p.setInputAttrs(span, messages)
 
 	ch, err := p.inner.GenerateStream(ctx, messages, tools)
 	if err != nil {
@@ -94,20 +106,34 @@ func (p *TracingProvider) GenerateStream(ctx context.Context, messages []schema.
 		defer span.End()
 
 		var lastUsage *schema.Usage
+		var lastMsg *schema.Message
 		for chunk := range ch {
-			// 从 Done chunk 提取 Usage
-			if chunk.Type == schema.StreamChunkDone && chunk.Usage != nil {
-				lastUsage = chunk.Usage
+			if chunk.Type == schema.StreamChunkDone {
+				lastMsg = chunk.Message
+				if chunk.Usage != nil {
+					lastUsage = chunk.Usage
+				}
 			}
 			wrapped <- chunk
+		}
+		if lastMsg != nil {
+			span.SetAttributes(attribute.String(AttrLangfuseOutput, serializeOutput(lastMsg)))
 		}
 		p.recordMetrics(ctx, span, lastUsage, time.Since(start).Seconds(), nil)
 	}()
 	return wrapped, nil
 }
 
-// recordMetrics 将耗时、token 用量记录到 Span 属性和 OTEL Metrics 中。
-// 若 err 非 nil，在 Span 上记录错误并设置 AttrErrorMsg 属性。
+// setInputAttrs 在 Span 上写入 langfuse.input 和模型相关属性。
+func (p *TracingProvider) setInputAttrs(span trace.Span, messages []schema.Message) {
+	span.SetAttributes(attribute.String(AttrLangfuseInput, serializeMessages(messages)))
+	if p.modelName != "" {
+		span.SetAttributes(attribute.String(AttrGenAIRequestModel, p.modelName))
+	}
+}
+
+// recordMetrics 将耗时、token 用量写入 Span 属性和 OTEL Metrics。
+// token 用量同时写入 harness9 自定义属性和 GenAI 语义约定属性，确保 Langfuse 正确识别。
 func (p *TracingProvider) recordMetrics(ctx context.Context, span trace.Span, usage *schema.Usage, dur float64, err error) {
 	if err != nil {
 		span.RecordError(err)
@@ -116,8 +142,12 @@ func (p *TracingProvider) recordMetrics(ctx context.Context, span trace.Span, us
 	p.llmDuration.Record(ctx, dur)
 	if usage != nil {
 		span.SetAttributes(
+			// harness9 内部属性（用于 OTEL Metrics 维度）
 			attribute.Int(AttrInputTokens, usage.InputTokens),
 			attribute.Int(AttrOutputTokens, usage.OutputTokens),
+			// GenAI 语义约定属性（Langfuse 用于 Token 用量展示与费用估算）
+			attribute.Int(AttrGenAIInputTokens, usage.InputTokens),
+			attribute.Int(AttrGenAIOutputTokens, usage.OutputTokens),
 		)
 		p.tokensInTotal.Add(ctx, int64(usage.InputTokens))
 		p.tokensOutTotal.Add(ctx, int64(usage.OutputTokens))

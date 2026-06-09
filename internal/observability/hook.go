@@ -55,21 +55,29 @@ func NewObservabilityHook(p *Providers) (*ObservabilityHook, error) {
 	}, nil
 }
 
-// BeforeExecute 启动工具执行 Span，将 Span 和开始时间注入返回的 ctx。
+// BeforeExecute 启动工具执行 Span，写入工具名和参数（langfuse.input），注入开始时间。
 // 始终返回 HookActionAllow，不拦截工具执行。
 func (h *ObservabilityHook) BeforeExecute(ctx context.Context, tc schema.ToolCall) (context.Context, hooks.HookDecision, error) {
 	ctx, _ = h.tracer.Start(ctx, SpanToolExecution,
 		trace.WithAttributes(attribute.String(AttrToolName, tc.Name)),
 	)
+	// langfuse.input：工具调用参数 JSON，展示在 Langfuse Tool Span 的 Input 字段。
+	span := trace.SpanFromContext(ctx)
+	if len(tc.Arguments) > 0 {
+		span.SetAttributes(attribute.String(AttrLangfuseInput, truncateAttr(string(tc.Arguments))))
+	}
 	ctx = context.WithValue(ctx, obsStartKey{}, time.Now())
 	return ctx, hooks.Allow(), nil
 }
 
-// AfterExecute 结束 Span，记录工具调用耗时与次数 metrics。
+// AfterExecute 结束 Span，写入工具结果（langfuse.output），记录耗时与次数 metrics。
 // 若 result.IsError 为 true，在 Span 上记录错误属性。
 // 透传 result，不修改工具执行结果。
 func (h *ObservabilityHook) AfterExecute(ctx context.Context, tc schema.ToolCall, result schema.ToolResult) schema.ToolResult {
 	span := trace.SpanFromContext(ctx)
+
+	// langfuse.output：工具执行结果，展示在 Langfuse Tool Span 的 Output 字段。
+	span.SetAttributes(attribute.String(AttrLangfuseOutput, truncateAttr(result.Output)))
 
 	// 计算耗时
 	var elapsed float64
