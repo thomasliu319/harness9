@@ -216,7 +216,7 @@ func (e *AgentEngine) runLoop(ctx context.Context, userPrompt string, logPrefix 
 	if obs == nil {
 		obs = noopObserver{}
 	}
-	// 提前读取 sessionID 用于 span 属性（在 mu.RLock 快照之前）。
+	// 单独加读锁读取 sessionID 用于 span 属性（与下方 sess/comp 快照锁分离，避免持锁时间过长）。
 	e.mu.RLock()
 	var sessIDForObs string
 	if e.session != nil {
@@ -274,11 +274,13 @@ func (e *AgentEngine) runLoop(ctx context.Context, userPrompt string, logPrefix 
 		turnCtx := obs.OnTurnStart(ctx, turnCount)
 
 		if e.maxTurns > 0 && turnCount > e.maxTurns {
-			return fmt.Errorf("已达最大 Turn 数 (%d)，循环终止", e.maxTurns)
+			interactionErr = fmt.Errorf("已达最大 Turn 数 (%d)，循环终止", e.maxTurns)
+			return interactionErr
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("context 已取消: %w", ctx.Err())
+			interactionErr = fmt.Errorf("context 已取消: %w", ctx.Err())
+			return interactionErr
 		default:
 		}
 

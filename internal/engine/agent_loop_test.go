@@ -521,6 +521,116 @@ func TestMemoryNudgeNotPersisted(t *testing.T) {
 	}
 }
 
+// TestEngineObserver_CallSequence 验证 EngineObserver 的回调顺序和参数正确性。
+func TestEngineObserver_CallSequence(t *testing.T) {
+	var (
+		interactionStarts int
+		interactionEnds   int
+		turnStarts        []int
+		turnEnds          []int
+		endErr            error
+	)
+
+	obs := &testObserver{
+		onStart: func(ctx context.Context, sid, prompt string) context.Context {
+			interactionStarts++
+			return ctx
+		},
+		onEnd: func(ctx context.Context, turns int, err error) {
+			interactionEnds++
+			endErr = err
+		},
+		onTurnStart: func(ctx context.Context, turn int) context.Context {
+			turnStarts = append(turnStarts, turn)
+			return ctx
+		},
+		onTurnEnd: func(ctx context.Context, turn int, hasTools bool) {
+			turnEnds = append(turnEnds, turn)
+		},
+	}
+
+	mock := &countingProvider{
+		responses: []func(tools []schema.ToolDefinition) *schema.Message{
+			func(_ []schema.ToolDefinition) *schema.Message {
+				return &schema.Message{Role: schema.RoleAssistant, Content: "done"}
+			},
+		},
+	}
+	reg := &staticRegistry{output: "ok"}
+	eng := NewAgentEngine(mock, reg, t.TempDir(),
+		WithMaxTurns(10),
+		WithEngineObserver(obs),
+	)
+
+	if err := eng.Run(context.Background(), "hello"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if interactionStarts != 1 {
+		t.Errorf("OnInteractionStart called %d times, want 1", interactionStarts)
+	}
+	if interactionEnds != 1 {
+		t.Errorf("OnInteractionEnd called %d times, want 1", interactionEnds)
+	}
+	if endErr != nil {
+		t.Errorf("OnInteractionEnd err = %v, want nil", endErr)
+	}
+	if len(turnStarts) == 0 || turnStarts[0] != 1 {
+		t.Errorf("OnTurnStart first call got turn %v, want [1]", turnStarts)
+	}
+	if len(turnEnds) != len(turnStarts) {
+		t.Errorf("OnTurnEnd called %d times, OnTurnStart called %d times", len(turnEnds), len(turnStarts))
+	}
+}
+
+// testObserver 是用于测试的 EngineObserver 实现。
+type testObserver struct {
+	onStart     func(ctx context.Context, sid, prompt string) context.Context
+	onEnd       func(ctx context.Context, turns int, err error)
+	onTurnStart func(ctx context.Context, turn int) context.Context
+	onTurnEnd   func(ctx context.Context, turn int, hasTools bool)
+}
+
+func (o *testObserver) OnInteractionStart(ctx context.Context, sid, prompt string) context.Context {
+	if o.onStart != nil {
+		return o.onStart(ctx, sid, prompt)
+	}
+	return ctx
+}
+func (o *testObserver) OnInteractionEnd(ctx context.Context, turns int, err error) {
+	if o.onEnd != nil {
+		o.onEnd(ctx, turns, err)
+	}
+}
+func (o *testObserver) OnTurnStart(ctx context.Context, turn int) context.Context {
+	if o.onTurnStart != nil {
+		return o.onTurnStart(ctx, turn)
+	}
+	return ctx
+}
+func (o *testObserver) OnTurnEnd(ctx context.Context, turn int, hasTools bool) {
+	if o.onTurnEnd != nil {
+		o.onTurnEnd(ctx, turn, hasTools)
+	}
+}
+
+// TestEngineObserver_NilFallback 验证不注入 observer 时 nil 自动降级为 noop 不会 panic。
+func TestEngineObserver_NilFallback(t *testing.T) {
+	mock := &countingProvider{
+		responses: []func([]schema.ToolDefinition) *schema.Message{
+			func(_ []schema.ToolDefinition) *schema.Message {
+				return &schema.Message{Role: schema.RoleAssistant, Content: "done"}
+			},
+		},
+	}
+	reg := &staticRegistry{output: "ok"}
+	// 不调用 WithEngineObserver，observer 为 nil
+	eng := NewAgentEngine(mock, reg, t.TempDir(), WithMaxTurns(10))
+	if err := eng.Run(context.Background(), "hello"); err != nil {
+		t.Fatalf("Run with nil observer: %v", err)
+	}
+}
+
 // TestRunLoop_PlanMode_FiltersWriteTools 验证 Plan Mode 下写操作工具被过滤，只读工具保留。
 func TestRunLoop_PlanMode_FiltersWriteTools(t *testing.T) {
 	p := &countingProvider{
