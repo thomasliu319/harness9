@@ -1,3 +1,5 @@
+// Package main 实现 SWE-bench Lite benchmark runner，
+// 用于评估 harness9 在真实 GitHub Issue 修复任务上的 Agent 能力。
 package main
 
 import (
@@ -6,6 +8,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"sort"
 	"time"
 )
 
@@ -64,10 +67,18 @@ func sampleByRepo(instances []Instance, n int, seed int64) []Instance {
 		byRepo[inst.Repo] = append(byRepo[inst.Repo], inst)
 	}
 
+	// 对 repo 名排序，确保相同 seed 产生相同输出（Go map 遍历非确定性）
+	repos := make([]string, 0, len(byRepo))
+	for repo := range byRepo {
+		repos = append(repos, repo)
+	}
+	sort.Strings(repos)
+
 	rng := rand.New(rand.NewSource(seed))
 
 	var sampled []Instance
-	for _, group := range byRepo {
+	for _, repo := range repos {
+		group := byRepo[repo]
 		rng.Shuffle(len(group), func(i, j int) { group[i], group[j] = group[j], group[i] })
 		if len(group) > n {
 			group = group[:n]
