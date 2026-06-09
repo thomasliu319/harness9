@@ -154,6 +154,12 @@ func main() {
 
 // preflight 在启动前验证必要条件，任一失败则终止程序。
 func preflight(cfg Config) error {
+	if cfg.Parallel <= 0 {
+		return fmt.Errorf("--parallel 必须 >= 1，当前值: %d", cfg.Parallel)
+	}
+	if cfg.SampleN <= 0 {
+		return fmt.Errorf("--sample 必须 >= 1，当前值: %d", cfg.SampleN)
+	}
 	if os.Getenv("OPENAI_API_KEY") == "" {
 		return fmt.Errorf("OPENAI_API_KEY 未配置")
 	}

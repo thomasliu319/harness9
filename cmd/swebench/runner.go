@@ -60,7 +60,9 @@ func runInstance(ctx context.Context, inst Instance, cfg Config) RunResult {
 	if err != nil {
 		return RunResult{Instance: inst, Error: fmt.Errorf("git clone 失败: %w\n%s", err, cloneOut), Duration: time.Since(start)}
 	}
-	checkoutOut, err := exec.CommandContext(cloneCtx, "git", "-C", tmpDir, "checkout", inst.BaseCommit).CombinedOutput()
+	checkoutCtx, checkoutCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer checkoutCancel()
+	checkoutOut, err := exec.CommandContext(checkoutCtx, "git", "-C", tmpDir, "checkout", inst.BaseCommit).CombinedOutput()
 	if err != nil {
 		return RunResult{Instance: inst, Error: fmt.Errorf("git checkout 失败: %w\n%s", err, checkoutOut), Duration: time.Since(start)}
 	}
@@ -111,7 +113,9 @@ func runInstance(ctx context.Context, inst Instance, cfg Config) RunResult {
 	runErr := eng.Run(instanceCtx, "请修复上述 Issue。")
 
 	// 7. 收集 patch（无论 runErr 如何，MaxTurns 触发时也可能有部分 patch）
-	patchOut, _ := exec.CommandContext(ctx, "git", "-C", tmpDir, "diff").CombinedOutput()
+	diffCtx, diffCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer diffCancel()
+	patchOut, _ := exec.CommandContext(diffCtx, "git", "-C", tmpDir, "diff").CombinedOutput()
 	patch := strings.TrimSpace(string(patchOut))
 
 	if runErr != nil && patch == "" {
