@@ -31,10 +31,23 @@ const (
 	MetricTurnsTotal   = "harness9.agent.turns.total"       // counter
 )
 
-// Langfuse 富内容属性——Langfuse OTEL ingestion 将这两个属性映射到 UI 的 Input / Output 字段。
+// Langfuse OTEL 属性——Langfuse v4 ingestion 使用以下两组属性映射到 UI 的 Input / Output 字段。
+//
+// Trace 级别（根 span，即 harness9.interaction）：
+//
+//	langfuse.trace.input / langfuse.trace.output
+//
+// Observation 级别（子 span，即 llm_request、tool、turn）：
+//
+//	langfuse.observation.input / langfuse.observation.output
+//
+// 旧式的 langfuse.input / langfuse.output 被 Langfuse 存入 attributes 元数据，
+// 不会被映射到 Input/Output 展示字段。
 const (
-	AttrLangfuseInput  = "langfuse.input"
-	AttrLangfuseOutput = "langfuse.output"
+	AttrLangfuseTraceInput  = "langfuse.trace.input"
+	AttrLangfuseTraceOutput = "langfuse.trace.output"
+	AttrLangfuseObsInput    = "langfuse.observation.input"
+	AttrLangfuseObsOutput   = "langfuse.observation.output"
 )
 
 // GenAI 语义约定属性（OTEL 标准）——Langfuse 以这些属性识别 LLM Generation 并展示 Token 用量与模型信息。

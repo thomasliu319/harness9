@@ -61,10 +61,10 @@ func (h *ObservabilityHook) BeforeExecute(ctx context.Context, tc schema.ToolCal
 	ctx, _ = h.tracer.Start(ctx, SpanToolExecution,
 		trace.WithAttributes(attribute.String(AttrToolName, tc.Name)),
 	)
-	// langfuse.input：工具调用参数 JSON，展示在 Langfuse Tool Span 的 Input 字段。
+	// langfuse.observation.input：工具调用参数 JSON，Langfuse v4 observation 级别 Input 字段。
 	span := trace.SpanFromContext(ctx)
 	if len(tc.Arguments) > 0 {
-		span.SetAttributes(attribute.String(AttrLangfuseInput, truncateAttr(string(tc.Arguments))))
+		span.SetAttributes(attribute.String(AttrLangfuseObsInput, truncateAttr(string(tc.Arguments))))
 	}
 	ctx = context.WithValue(ctx, obsStartKey{}, time.Now())
 	return ctx, hooks.Allow(), nil
@@ -76,8 +76,8 @@ func (h *ObservabilityHook) BeforeExecute(ctx context.Context, tc schema.ToolCal
 func (h *ObservabilityHook) AfterExecute(ctx context.Context, tc schema.ToolCall, result schema.ToolResult) schema.ToolResult {
 	span := trace.SpanFromContext(ctx)
 
-	// langfuse.output：工具执行结果，展示在 Langfuse Tool Span 的 Output 字段。
-	span.SetAttributes(attribute.String(AttrLangfuseOutput, truncateAttr(result.Output)))
+	// langfuse.observation.output：工具执行结果，Langfuse v4 observation 级别 Output 字段。
+	span.SetAttributes(attribute.String(AttrLangfuseObsOutput, truncateAttr(result.Output)))
 
 	// 计算耗时
 	var elapsed float64

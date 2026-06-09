@@ -55,8 +55,8 @@ func (o *OTELEngineObserver) OnInteractionStart(ctx context.Context, sessionID, 
 	ctx, span := o.tracer.Start(ctx, SpanInteraction,
 		trace.WithAttributes(attribute.String(AttrSessionID, sessionID)),
 	)
-	// langfuse.input：用户的初始 prompt，展示在 Langfuse Interaction 的 Input 字段。
-	span.SetAttributes(attribute.String(AttrLangfuseInput, truncateAttr(prompt)))
+	// langfuse.trace.input：用户的初始 prompt，Langfuse v4 trace 级别 Input 字段。
+	span.SetAttributes(attribute.String(AttrLangfuseTraceInput, truncateAttr(prompt)))
 	// 将 span 同时存入自定义 key（供 OnInteractionEnd 取用）
 	// 和 OTEL 标准 slot（供下级 tracer.Start 自动寻找父节点）。
 	ctx = trace.ContextWithSpan(ctx, span)

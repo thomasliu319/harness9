@@ -79,7 +79,7 @@ func (p *TracingProvider) Generate(ctx context.Context, messages []schema.Messag
 	dur := time.Since(start).Seconds()
 
 	if msg != nil && err == nil {
-		span.SetAttributes(attribute.String(AttrLangfuseOutput, serializeOutput(msg)))
+		span.SetAttributes(attribute.String(AttrLangfuseObsOutput, serializeOutput(msg)))
 	}
 	p.recordMetrics(ctx, span, usage, dur, err)
 	return msg, usage, err
@@ -117,16 +117,17 @@ func (p *TracingProvider) GenerateStream(ctx context.Context, messages []schema.
 			wrapped <- chunk
 		}
 		if lastMsg != nil {
-			span.SetAttributes(attribute.String(AttrLangfuseOutput, serializeOutput(lastMsg)))
+			span.SetAttributes(attribute.String(AttrLangfuseObsOutput, serializeOutput(lastMsg)))
 		}
 		p.recordMetrics(ctx, span, lastUsage, time.Since(start).Seconds(), nil)
 	}()
 	return wrapped, nil
 }
 
-// setInputAttrs 在 Span 上写入 langfuse.input 和模型相关属性。
+// setInputAttrs 在 Span 上写入 langfuse.observation.input 和模型相关属性。
+// Langfuse v4 要求 observation 级别的 input 使用 langfuse.observation.input。
 func (p *TracingProvider) setInputAttrs(span trace.Span, messages []schema.Message) {
-	span.SetAttributes(attribute.String(AttrLangfuseInput, serializeMessages(messages)))
+	span.SetAttributes(attribute.String(AttrLangfuseObsInput, serializeMessages(messages)))
 	if p.modelName != "" {
 		span.SetAttributes(attribute.String(AttrGenAIRequestModel, p.modelName))
 	}
