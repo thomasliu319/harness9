@@ -4,7 +4,10 @@ package observability
 
 import (
 	"context"
+	"log"
+	"time"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
@@ -21,21 +24,34 @@ type interactionSpanKey struct{}
 // turnSpanKey 存储 turn-level Span 的 ctx key。
 type turnSpanKey struct{}
 
+// tracerFlusher 是可选的 flush 接口，sdktrace.TracerProvider 实现了它。
+type tracerFlusher interface {
+	ForceFlush(context.Context) error
+}
+
 // OTELEngineObserver 实现 engine.EngineObserver，
 // 用 OTEL Span 覆盖每次 interaction（顶层父节点）和每个 Turn。
 type OTELEngineObserver struct {
 	tracer     trace.Tracer
 	turnsTotal metric.Int64Counter
+	flusher    tracerFlusher // 非 nil 时，在 OnInteractionEnd 后立即 ForceFlush
 }
 
 // NewOTELEngineObserver 构造 OTELEngineObserver，初始化 turns 计数器。
+// 会尝试从全局 TracerProvider 中提取 ForceFlush 能力，确保每次 agent 运行结束后
+// 立即将 span 推送到后端，不等待 batcher 的定时 flush（默认 2s）。
 func NewOTELEngineObserver(p *Providers) (*OTELEngineObserver, error) {
 	turns, err := p.Meter.Int64Counter(MetricTurnsTotal,
 		metric.WithDescription("Total agent turns executed"))
 	if err != nil {
 		return nil, err
 	}
-	return &OTELEngineObserver{tracer: p.Tracer, turnsTotal: turns}, nil
+	obs := &OTELEngineObserver{tracer: p.Tracer, turnsTotal: turns}
+	// 尝试从全局 TracerProvider 获取 ForceFlush 能力（SDK 实现了此接口）。
+	if f, ok := otel.GetTracerProvider().(tracerFlusher); ok {
+		obs.flusher = f
+	}
+	return obs, nil
 }
 
 // OnInteractionStart 启动顶层 interaction Span，注入 session.id 和初始 prompt 属性。
@@ -54,6 +70,7 @@ func (o *OTELEngineObserver) OnInteractionStart(ctx context.Context, sessionID, 
 }
 
 // OnInteractionEnd 结束 interaction Span，记录总 turns 数。
+// 随后立即调用 ForceFlush，确保本次 interaction 的所有 span 在等待 batcher 定时前就被推送。
 func (o *OTELEngineObserver) OnInteractionEnd(ctx context.Context, turns int, err error) {
 	span, _ := ctx.Value(interactionSpanKey{}).(trace.Span)
 	if span == nil {
@@ -64,6 +81,16 @@ func (o *OTELEngineObserver) OnInteractionEnd(ctx context.Context, turns int, er
 	}
 	span.SetAttributes(attribute.Int(AttrTurnNumber, turns))
 	span.End()
+
+	// ForceFlush：立即将当前 batcher 中的所有已结束 span 推送到后端。
+	// 避免 span 因等待 batcher 定时触发（2s）而延迟上报，尤其对短 session 尤为重要。
+	if o.flusher != nil {
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if ferr := o.flusher.ForceFlush(flushCtx); ferr != nil {
+			log.Printf("[OTEL] ForceFlush 失败: %v", ferr)
+		}
+	}
 }
 
 // OnTurnStart 启动 turn-level Span（interaction Span 的子节点），将其存入 ctx。
