@@ -246,6 +246,74 @@ harness9 内置一个 **`general-purpose`（通用）子代理**，设计对标 
 
 详见 [Sub-Agent 系统实现原理](docs/核心功能/sub-agent.md)。
 
+### Observability（OpenTelemetry 链路追踪）
+
+通过三条非侵入式接入路径，将 OTEL Span 和 Metrics 无缝嵌入 Agent 运行全链路——引擎层、LLM 调用层、工具执行层各自独立，不改动核心代码：
+
+```
+harness9.interaction          ← 一次完整 Agent 运行（含 sessionID）
+  └── harness9.turn           ← 单个 ReAct Turn
+        ├── harness9.llm_request  ← LLM API 调用（含 token 数）
+        └── harness9.tool         ← 工具执行（含工具名、成功/失败）
+```
+
+```bash
+# 接入 Jaeger（本地开发）
+docker run -p 16686:16686 -p 4318:4318 jaegertracing/all-in-one
+export OTEL_ENABLED=true OTEL_EXPORTER_TYPE=otlp
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+harness9
+# 打开 http://localhost:16686 查看完整调用链
+
+# 接入 Langfuse（生产）
+export OTEL_ENABLED=true OTEL_EXPORTER_TYPE=otlp
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://cloud.langfuse.com/api/public/otel
+harness9
+```
+
+- **默认零开销**：`OTEL_ENABLED` 不设置时使用 noop 实现，无任何性能影响
+- **6 个关键 Metrics**：LLM 请求延迟、Token 消耗（Input/Output）、工具调用次数（by name + status）、工具执行耗时、Agent Turn 总数
+- **三种 Exporter**：`noop`（默认）/ `stdout`（本地调试）/ `otlp`（生产接入 Langfuse、Grafana、Jaeger）
+
+详见 [Test·Eval·Observability 技术方案](docs/核心功能/observability.md)。
+
+### Test & Eval（自动化测试与评估）
+
+内置评估框架，用 `ScriptedProvider` 把 LLM 行为脚本化，配合 `Assertion` 断言体系验证 Agent 的工具调用轨迹——无需真实 API，CI 中 hermetic 运行：
+
+```go
+// 定义一个确定性 eval 用例
+c := &evals.Case{
+    ID:     "tool_calling/bash_basic",
+    Prompt: "运行 echo hello",
+    Provider: evals.NewScriptedProvider(
+        evals.ScriptedTurn{ToolCalls: []schema.ToolCall{
+            evals.MakeToolCall("tc1", "bash", `{"command":"echo hello"}`),
+        }},
+        evals.ScriptedTurn{Text: "命令已执行，输出 hello。"},
+    ),
+    Assertions: []evals.Assertion{
+        &evals.ToolCalledAssertion{ToolName: "bash"},
+        &evals.NoErrorAssertion{},
+        &evals.MaxTurnsAssertion{Max: 3}, // soft：仅记警告
+    },
+}
+result := evals.RunCase(context.Background(), c)
+```
+
+```bash
+# 运行黄金数据集（8 个内置用例，无需 API Key）
+go test ./internal/evals/dataset/... -v
+```
+
+- **确定性测试**：`ScriptedProvider` 按脚本序列返回回复，相同输入永远得到相同结果
+- **行为轨迹验证**：`recordingHook` 记录所有工具调用，Hard/Soft 双层断言覆盖正确性与效率
+- **Hermetic CI 隔离**：`SetupHermeticEnv` 清除所有 API Key，防止 eval 意外调用付费服务
+- **CI Quality Gate**：PR 触发自动评估（`.github/workflows/eval.yml`），eval 失败则阻断合并
+- **黄金数据集**：内置 8 个用例（工具调用准确性 × 4、Planning 完成率 × 2、Memory 持久化 × 2）
+
+详见 [Test·Eval·Observability 技术方案](docs/核心功能/observability.md)。
+
 ### Sandbox（Docker 容器级隔离）
 
 harness9 默认在本地 Docker 容器内执行所有工具调用（需本地安装并运行 Docker）。Docker 不可用时自动降级为本地进程模式，Agent 行为不变。
@@ -330,6 +398,8 @@ for evt := range stream {
 | **Schema**     | 跨组件共享的核心数据类型（Message、ToolCall、Usage 等）                                                  | ✅   |
 | **Tools**      | 工具注册表 + 内置工具（bash / read_file（offset/limit 分页）/ write_file / edit_file / todo_write / memory_write / memory_search）                 | ✅   |
 | **Sandbox**    | Docker 容器级隔离：OS 级进程沙箱（cap-drop/no-new-privileges）、Agent 级独立容器、bind mount 工具透明路由、TUI SandboxBar、孤儿容器回收；默认开启；`SANDBOX_ENABLED=false` 关闭 | ✅   |
+| **Observability** | OpenTelemetry 链路追踪：`OTELEngineObserver`（Interaction/Turn Span）+ `TracingProvider`（LLM Span + Token Metrics）+ `ObservabilityHook`（Tool Span）；默认 noop 零开销；支持接入 Langfuse / Grafana / Jaeger | ✅   |
+| **Evals**      | 自动化评估框架：`ScriptedProvider`（确定性 mock）+ `Assertion`（Hard/Soft 断言）+ `EvalHarness`（RunCase/Suite）+ `SetupHermeticEnv` + `BuildReport`（JSON/Markdown）；8 个黄金数据集用例；CI Quality Gate | ✅   |
 | **Env**        | 零依赖 `.env` 配置加载器                                                                        | ✅   |
 
 
@@ -388,6 +458,7 @@ harness9/
 | [Shell 执行功能技术方案](docs/核心功能/shell-execution.md)                   | `!` 前缀触发、异步执行机制、LLM 上下文注入、截断策略、交互式命令拦截          |
 | [Human-in-the-Loop 权限控制](docs/核心功能/human-in-the-loop.md)           | HookDecision、DangerHook、PermissionHook、审批对话框、白名单配置、敏感路径保护  |
 | [Sandbox 沙箱系统](docs/核心功能/sandbox.md)                               | Docker 容器级隔离、Environment 接口、五状态生命周期、安全加固参数、TUI SandboxBar、孤儿回收 |
+| [Test·Eval·Observability](docs/核心功能/observability.md)                 | 三层可观测体系设计、OTEL Span 层次结构与实现原理、eval 确定性框架、CI Quality Gate |
 | [AGENTS.md](AGENTS.md)                                       | 项目开发规范、编码标准、架构决策                                        |
 
 
