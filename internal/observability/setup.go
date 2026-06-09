@@ -143,7 +143,10 @@ func Setup(ctx context.Context, cfg Config) (*Providers, error) {
 		otel.SetMeterProvider(mp)
 	}
 
-	tracer := otel.Tracer(cfg.ServiceName)
+	// 直接从 SDK TracerProvider 获取 tracer，不经过全局 wrapper（otel.Tracer 走 wrapper
+	// 在某些 OTEL SDK 版本下 span 不经过 BatchSpanProcessor，导致静默丢失）。
+	// 测试证明：tp.Tracer() 直接路径能正确发到 Langfuse；otel.Tracer() 全局路径不行。
+	tracer := tp.Tracer(cfg.ServiceName)
 	meter := otel.Meter(cfg.ServiceName)
 
 	shutdown := func(ctx context.Context) error {
