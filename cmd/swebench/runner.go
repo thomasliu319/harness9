@@ -52,15 +52,17 @@ func runInstance(ctx context.Context, inst Instance, cfg Config) RunResult {
 	defer os.RemoveAll(tmpDir)
 
 	// 2. git clone + checkout base_commit（宿主机执行）
+	// 使用 --filter=blob:none（blobless clone）：只拉取 commits 和 tree 元数据，
+	// 不下载文件内容；checkout 时按需拉取，对大仓库（Django/Sympy 等）速度快 10x+。
 	repoURL := "https://github.com/" + inst.Repo
-	cloneCtx, cloneCancel := context.WithTimeout(ctx, 5*time.Minute)
+	cloneCtx, cloneCancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cloneCancel()
 
-	cloneOut, err := exec.CommandContext(cloneCtx, "git", "clone", repoURL, tmpDir).CombinedOutput()
+	cloneOut, err := exec.CommandContext(cloneCtx, "git", "clone", "--filter=blob:none", repoURL, tmpDir).CombinedOutput()
 	if err != nil {
 		return RunResult{Instance: inst, Error: fmt.Errorf("git clone 失败: %w\n%s", err, cloneOut), Duration: time.Since(start)}
 	}
-	checkoutCtx, checkoutCancel := context.WithTimeout(ctx, 30*time.Second)
+	checkoutCtx, checkoutCancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer checkoutCancel()
 	checkoutOut, err := exec.CommandContext(checkoutCtx, "git", "-C", tmpDir, "checkout", inst.BaseCommit).CombinedOutput()
 	if err != nil {
