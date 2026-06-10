@@ -125,7 +125,82 @@ func (t *EditFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", fmt.Errorf("写回文件失败: %w", err)
 	}
 
-	return fmt.Sprintf("成功修改文件: %s", input.Path), nil
+	return buildEditSummary(input.Path, originalContent, newContent), nil
+}
+
+// editContextLines 是改动上下文中前后各保留的行数。
+const editContextLines = 3
+
+// buildEditSummary 根据编辑前后的内容构建带改动上下文的成功提示，
+// 帮助 Agent 无需额外 read_file 调用即可直接验证改动是否正确。
+//
+// 使用公共前缀/后缀算法（不依赖外部库）定位变更区域，并以 unified diff 风格输出：
+//   - 改动前的 3 行上下文（无前缀）
+//   - 被删除的行（前缀 -）
+//   - 新增的行（前缀 +）
+//   - 改动后的 3 行上下文（无前缀）
+//
+// 当变更行数超过 20 行时，只输出行数统计，避免结果过长撑满 LLM 上下文。
+func buildEditSummary(path, originalContent, newContent string) string {
+	// 归一化换行符，保证跨平台比较一致
+	orig := strings.ReplaceAll(originalContent, "\r\n", "\n")
+	next := strings.ReplaceAll(newContent, "\r\n", "\n")
+
+	origLines := strings.Split(strings.TrimRight(orig, "\n"), "\n")
+	nextLines := strings.Split(strings.TrimRight(next, "\n"), "\n")
+
+	// 找到第一处差异的行（公共前缀长度）
+	start := 0
+	for start < len(origLines) && start < len(nextLines) && origLines[start] == nextLines[start] {
+		start++
+	}
+
+	// 从尾部向前找公共后缀的起始位置
+	origEnd := len(origLines) - 1
+	nextEnd := len(nextLines) - 1
+	for origEnd >= start && nextEnd >= start && origLines[origEnd] == nextLines[nextEnd] {
+		origEnd--
+		nextEnd--
+	}
+
+	// 计算删除/新增行数（纯插入或纯删除时对应计数为 0）
+	removed := origEnd - start + 1
+	if removed < 0 {
+		removed = 0
+	}
+	added := nextEnd - start + 1
+	if added < 0 {
+		added = 0
+	}
+
+	// 变更超过 20 行只报数字，避免输出过长
+	if removed+added > 20 {
+		return fmt.Sprintf("成功修改文件: %s（删除 %d 行，新增 %d 行）", path, removed, added)
+	}
+
+	ctxStart := max(0, start-editContextLines)
+	ctxEnd := min(len(origLines)-1, origEnd+editContextLines)
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "成功修改文件: %s\n\n--- 改动上下文 ---\n", path)
+	// 改动前的上下文行
+	for i := ctxStart; i < start; i++ {
+		fmt.Fprintf(&sb, "  %s\n", origLines[i])
+	}
+	// 被删除的行
+	for i := start; i <= origEnd; i++ {
+		fmt.Fprintf(&sb, "- %s\n", origLines[i])
+	}
+	// 新增的行
+	for i := start; i <= nextEnd; i++ {
+		fmt.Fprintf(&sb, "+ %s\n", nextLines[i])
+	}
+	// 改动后的上下文行（取 original 后续行）
+	for i := origEnd + 1; i <= ctxEnd; i++ {
+		fmt.Fprintf(&sb, "  %s\n", origLines[i])
+	}
+	fmt.Fprint(&sb, "---")
+	return sb.String()
 }
 
 // fuzzyReplace 对文件内容执行多级模糊匹配替换（Multi-Level Fuzzy Matching）。

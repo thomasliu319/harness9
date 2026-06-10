@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -290,6 +291,17 @@ func main() {
 	if !strings.Contains(out, "main.go") {
 		t.Errorf("success message should mention file path, got: %q", out)
 	}
+	// 验证改动上下文已嵌入输出（Agent 无需额外 read_file 确认）
+	if !strings.Contains(out, "---") {
+		t.Errorf("output should contain diff context section, got: %q", out)
+	}
+	// 检查 - / + 前缀存在，不检查具体缩进（缩进随文件内容变化）
+	if !strings.Contains(out, `- `) || !strings.Contains(out, `Println("hello")`) {
+		t.Errorf("output should show removed line, got: %q", out)
+	}
+	if !strings.Contains(out, `+ `) || !strings.Contains(out, `Println("world")`) {
+		t.Errorf("output should show added line, got: %q", out)
+	}
 
 	data, err := os.ReadFile(dir + "/main.go")
 	if err != nil {
@@ -459,6 +471,90 @@ func TestFuzzyReplace_L4_LineByLineIndentDifference(t *testing.T) {
 	}
 	if !strings.Contains(result, "x := 999") {
 		t.Errorf("target text should appear, got: %s", result)
+	}
+}
+
+// buildEditSummary：单行替换，验证 - / + 行和上下文行
+func TestBuildEditSummary_SingleLineChange(t *testing.T) {
+	orig := "line1\nline2_old\nline3\n"
+	next := "line1\nline2_new\nline3\n"
+	out := buildEditSummary("foo.py", orig, next)
+
+	if !strings.Contains(out, "- line2_old") {
+		t.Errorf("should show removed line, got: %s", out)
+	}
+	if !strings.Contains(out, "+ line2_new") {
+		t.Errorf("should show added line, got: %s", out)
+	}
+	if !strings.Contains(out, "  line1") {
+		t.Errorf("should show context before change, got: %s", out)
+	}
+	if !strings.Contains(out, "  line3") {
+		t.Errorf("should show context after change, got: %s", out)
+	}
+}
+
+// buildEditSummary：纯插入（只新增行，无删除）
+func TestBuildEditSummary_InsertionOnly(t *testing.T) {
+	orig := "line1\nline3\n"
+	next := "line1\nline2_inserted\nline3\n"
+	out := buildEditSummary("foo.py", orig, next)
+
+	if !strings.Contains(out, "+ line2_inserted") {
+		t.Errorf("should show inserted line, got: %s", out)
+	}
+	// 没有 - 行
+	if strings.Contains(out, "- line") {
+		t.Errorf("should not show removed line for pure insertion, got: %s", out)
+	}
+}
+
+// buildEditSummary：纯删除（只删除行，无新增）
+func TestBuildEditSummary_DeletionOnly(t *testing.T) {
+	orig := "line1\nline2_removed\nline3\n"
+	next := "line1\nline3\n"
+	out := buildEditSummary("foo.py", orig, next)
+
+	if !strings.Contains(out, "- line2_removed") {
+		t.Errorf("should show removed line, got: %s", out)
+	}
+	// 没有 + 行
+	if strings.Contains(out, "+ line") {
+		t.Errorf("should not show added line for pure deletion, got: %s", out)
+	}
+}
+
+// buildEditSummary：变更超过 20 行时只报数字，不展开 diff
+func TestBuildEditSummary_LargeChange(t *testing.T) {
+	var origLines, nextLines []string
+	for i := 0; i < 25; i++ {
+		origLines = append(origLines, fmt.Sprintf("old line %d", i))
+		nextLines = append(nextLines, fmt.Sprintf("new line %d", i))
+	}
+	orig := strings.Join(origLines, "\n")
+	next := strings.Join(nextLines, "\n")
+	out := buildEditSummary("big.py", orig, next)
+
+	if !strings.Contains(out, "删除") || !strings.Contains(out, "新增") {
+		t.Errorf("large diff should report line counts, got: %s", out)
+	}
+	// 不应展开完整 diff
+	if strings.Contains(out, "--- 改动上下文") {
+		t.Errorf("large diff should not show full context section, got: %s", out)
+	}
+}
+
+// buildEditSummary：CRLF 文件归一化后正常展示
+func TestBuildEditSummary_CRLFContent(t *testing.T) {
+	orig := "line1\r\nline2_old\r\nline3\r\n"
+	next := "line1\r\nline2_new\r\nline3\r\n"
+	out := buildEditSummary("foo.py", orig, next)
+
+	if !strings.Contains(out, "- line2_old") {
+		t.Errorf("CRLF: should show removed line, got: %s", out)
+	}
+	if !strings.Contains(out, "+ line2_new") {
+		t.Errorf("CRLF: should show added line, got: %s", out)
 	}
 }
 
