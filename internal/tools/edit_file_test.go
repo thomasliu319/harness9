@@ -492,6 +492,10 @@ func TestBuildEditSummary_SingleLineChange(t *testing.T) {
 	if !strings.Contains(out, "  line3") {
 		t.Errorf("should show context after change, got: %s", out)
 	}
+	// diff 末尾的可信度声明必须存在，让 Agent 无需额外 grep/read_file 确认
+	if !strings.Contains(out, "✓") {
+		t.Errorf("should contain authoritative confirmation mark, got: %s", out)
+	}
 }
 
 // buildEditSummary：纯插入（只新增行，无删除）

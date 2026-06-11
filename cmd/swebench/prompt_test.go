@@ -10,7 +10,7 @@ func TestSwebenchPromptBuilder(t *testing.T) {
 		InstanceID:       "django__django-99",
 		ProblemStatement: "There is a bug in QuerySet.filter() when using complex Q objects.",
 	}
-	b := &swebenchPromptBuilder{instance: inst}
+	b := &swebenchPromptBuilder{instance: inst, workDir: "/tmp/swebench-test"}
 	prompt := b.Build()
 
 	if !strings.Contains(prompt, inst.ProblemStatement) {
@@ -33,16 +33,36 @@ func TestSwebenchPromptBuilder(t *testing.T) {
 	if !strings.Contains(prompt, "NO_PYTHON") {
 		t.Error("prompt should contain NO_PYTHON fast-detection pattern")
 	}
-	if !strings.Contains(prompt, "立即跳过本步，不再搜索 Python 安装位置") {
-		t.Error("prompt should contain instruction to skip python search immediately")
+	// 新版：立即跳过 Step 3 全部内容
+	if !strings.Contains(prompt, "立即跳过 Step 3 全部内容") {
+		t.Error("prompt should contain instruction to skip step 3 immediately")
+	}
+	// workDir 注入（P0：消除 /repo 路径假设）
+	if !strings.Contains(prompt, "/tmp/swebench-test") {
+		t.Error("prompt should contain the injected workDir")
+	}
+	if strings.Contains(prompt, "{{WORK_DIR}}") {
+		t.Error("prompt should not contain unreplaced WORK_DIR placeholder")
+	}
+	// bash 超时约束说明
+	if !strings.Contains(prompt, "30 秒") {
+		t.Error("prompt should mention 30s bash timeout")
 	}
 	// 先规划后编辑（P1：减少 edit_file 反复撤回）
 	if !strings.Contains(prompt, "在调用任何编辑工具之前") {
 		t.Error("prompt should contain plan-before-edit instruction")
 	}
 	// 验证上限（P2：杜绝过度验证）
-	if !strings.Contains(prompt, "验证至多 2 步") {
-		t.Error("prompt should contain max 2 verification steps constraint")
+	if !strings.Contains(prompt, "验证至多 1-2 步") {
+		t.Error("prompt should contain max verification steps constraint")
+	}
+	// edit_file diff 可信度声明
+	if !strings.Contains(prompt, "diff 即为权威确认") {
+		t.Error("prompt should declare diff as authoritative")
+	}
+	// 禁止 sed 读文件，引导使用 read_file
+	if !strings.Contains(prompt, "start_line") {
+		t.Error("prompt should mention read_file start_line parameter")
 	}
 	// 并发工具调用引导（P3）
 	if !strings.Contains(prompt, "尽量同时发起多个工具调用") {

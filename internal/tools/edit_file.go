@@ -207,7 +207,7 @@ func buildEditSummary(path, originalContent, newContent string) string {
 	for i := origEnd + 1; i <= ctxEnd; i++ {
 		fmt.Fprintf(&sb, "  %s\n", origLines[i])
 	}
-	fmt.Fprint(&sb, "---")
+	fmt.Fprint(&sb, "---\n✓ 以上 diff 已完整验证改动落地，无需额外 grep/sed/read_file 再次确认。")
 	return sb.String()
 }
 

@@ -151,3 +151,87 @@ func TestReadFileTool_Execute_LimitTruncation(t *testing.T) {
 		t.Errorf("truncation message should hint next offset=20, got %q", out)
 	}
 }
+
+// start_line/end_line 行号模式测试
+func TestReadFileTool_Execute_StartEndLine(t *testing.T) {
+	dir := t.TempDir()
+	content := "line1\nline2\nline3\nline4\nline5\n"
+	if err := os.WriteFile(dir+"/lines.txt", []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewReadFileTool(dir)
+
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"lines.txt","start_line":2,"end_line":4}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "line2") || !strings.Contains(out, "line4") {
+		t.Errorf("should contain line2-line4, got: %q", out)
+	}
+	if strings.Contains(out, "line1") || strings.Contains(out, "line5") {
+		t.Errorf("should not contain line1 or line5, got: %q", out)
+	}
+}
+
+func TestReadFileTool_Execute_StartLineOnly(t *testing.T) {
+	dir := t.TempDir()
+	var lines []string
+	for i := 1; i <= 10; i++ {
+		lines = append(lines, "line"+string(rune('0'+i)))
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(dir+"/lines.txt", []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewReadFileTool(dir)
+
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"lines.txt","start_line":3}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "line3") {
+		t.Errorf("should contain line3, got: %q", out)
+	}
+}
+
+func TestReadFileTool_Execute_StartLineOutOfRange(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/short.txt", []byte("one\ntwo\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewReadFileTool(dir)
+
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"short.txt","start_line":999}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "超出") {
+		t.Errorf("should report out-of-range, got: %q", out)
+	}
+}
+
+// 验证 truncated 标志路径：读取中间行时有截断提示，且不消费额外行
+func TestReadFileTool_Execute_StartEndLine_Truncation(t *testing.T) {
+	dir := t.TempDir()
+	content := "line1\nline2\nline3\nline4\nline5\n"
+	if err := os.WriteFile(dir+"/lines.txt", []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewReadFileTool(dir)
+
+	// 读第 1-3 行，文件还有第 4-5 行，应有截断提示
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"lines.txt","start_line":1,"end_line":3}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "line3") {
+		t.Errorf("should contain line3, got: %q", out)
+	}
+	if !strings.Contains(out, "start_line=4") {
+		t.Errorf("truncation hint should suggest start_line=4, got: %q", out)
+	}
+	// 不应泄露 line4/line5
+	if strings.Contains(out, "line4") || strings.Contains(out, "line5") {
+		t.Errorf("should not contain lines beyond end_line, got: %q", out)
+	}
+}
