@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -92,7 +93,9 @@ func runInstance(ctx context.Context, inst Instance, cfg Config) RunResult {
 	// 注册比 Linux 慢，30s（默认值）容易触发超时；扩大到 90s 留足缓冲。
 	sandboxCfg.StartTimeout = 90 * time.Second
 	mgr := sandbox.NewManager(sandboxCfg)
-	sandboxCtx, sandboxCancel := context.WithTimeout(ctx, 60*time.Second)
+	// sandboxCtx 必须 > StartTimeout（90s），否则外层超时先触发，
+	// 使内部 StartTimeout 的 90s 缓冲完全无效。设为 120s 留有余量。
+	sandboxCtx, sandboxCancel := context.WithTimeout(ctx, 120*time.Second)
 	defer sandboxCancel()
 	env, err := mgr.Create(sandboxCtx, tmpDir)
 	if err != nil {
@@ -137,6 +140,7 @@ func runInstance(ctx context.Context, inst Instance, cfg Config) RunResult {
 	instanceCtx, instanceCancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutMins)*time.Minute)
 	defer instanceCancel()
 
+	// logs/ 目录由 main.go 在进入并发循环前统一创建（os.MkdirAll），此处无需再建。
 	logPath := filepath.Join(cfg.OutputDir, "logs", inst.InstanceID+".log")
 	runErr := runWithTrajectory(instanceCtx, eng, "请修复上述 Issue。", logPath, inst)
 
@@ -217,7 +221,8 @@ func runWithTrajectory(ctx context.Context, eng *engine.AgentEngine, userPrompt,
 				cd.TokensBefore, cd.TokensAfter, cd.MsgsBefore, cd.MsgsAfter)
 
 		case engine.EventError:
-			runErr = fmt.Errorf("%s", evt.Data.(string))
+			// errors.Join 累积多次 EventError，保留完整错误链而非只保留最后一条。
+			runErr = errors.Join(runErr, fmt.Errorf("%s", evt.Data.(string)))
 
 		case engine.EventApprovalRequired:
 			// Benchmark 无人值守模式：自动批准所有工具调用

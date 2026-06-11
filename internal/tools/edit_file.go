@@ -146,8 +146,16 @@ func buildEditSummary(path, originalContent, newContent string) string {
 	orig := strings.ReplaceAll(originalContent, "\r\n", "\n")
 	next := strings.ReplaceAll(newContent, "\r\n", "\n")
 
-	origLines := strings.Split(strings.TrimRight(orig, "\n"), "\n")
-	nextLines := strings.Split(strings.TrimRight(next, "\n"), "\n")
+	// trimTrailingEmpty 去掉 strings.Split 在文件末尾 \n 后产生的空串元素，
+	// 而非用 TrimRight 吃掉所有尾部换行——后者会丢失有意义的末尾空行。
+	trimTrailingEmpty := func(lines []string) []string {
+		if len(lines) > 0 && lines[len(lines)-1] == "" {
+			return lines[:len(lines)-1]
+		}
+		return lines
+	}
+	origLines := trimTrailingEmpty(strings.Split(orig, "\n"))
+	nextLines := trimTrailingEmpty(strings.Split(next, "\n"))
 
 	// 找到第一处差异的行（公共前缀长度）
 	start := 0
