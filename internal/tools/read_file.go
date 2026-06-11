@@ -10,12 +10,14 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/harness9/internal/sandbox"
 	"github.com/harness9/internal/schema"
@@ -56,22 +58,33 @@ func (t *ReadFileTool) Name() string { return "read_file" }
 // Definition 返回工具元信息，包含描述和 JSON Schema 参数定义。
 func (t *ReadFileTool) Definition() schema.ToolDefinition {
 	return schema.ToolDefinition{
-		Name:        t.Name(),
-		Description: "读取指定路径的文件内容。请提供相对工作区的相对路径。支持 offset/limit 参数分页读取大文件。注意：offset 和 limit 的单位均为字节（byte），不是行号。",
+		Name: t.Name(),
+		Description: "读取指定路径的文件内容。" +
+			"推荐使用 start_line/end_line 按行号读取片段（最直观）；" +
+			"也支持 offset/limit 字节偏移分页。" +
+			"注意：offset/limit 单位为字节，不是行号。",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"path": map[string]interface{}{
 					"type":        "string",
-					"description": "要读取的文件路径，如 cmd/harness9/main.go",
+					"description": "要读取的文件路径，如 src/main.py",
+				},
+				"start_line": map[string]interface{}{
+					"type":        "integer",
+					"description": "从第 N 行开始读（1-based，含）。与 end_line 配合使用。设置后 offset 参数无效。",
+				},
+				"end_line": map[string]interface{}{
+					"type":        "integer",
+					"description": "读到第 N 行结束（1-based，含）。需配合 start_line 使用；不设则读到文件末尾（上限 200 行）。",
 				},
 				"offset": map[string]interface{}{
 					"type":        "integer",
-					"description": "起始字节偏移，单位为字节（不是行号）。默认 0，从文件开头读取。读取截断时，截断提示会给出下一个 offset 值。",
+					"description": "起始字节偏移，单位为字节（不是行号）。默认 0。与 start_line 互斥，优先使用 start_line。",
 				},
 				"limit": map[string]interface{}{
 					"type":        "integer",
-					"description": fmt.Sprintf("最多读取的字节数，单位为字节（不是行数）。默认 %d 字节。建议至少设为 500 以上，否则可能因截断返回不完整内容。", maxReadLen),
+					"description": fmt.Sprintf("最多读取的字节数（默认 %d）。与 offset 配合使用；使用 start_line/end_line 时此参数无效。", maxReadLen),
 				},
 			},
 			"required": []string{"path"},
@@ -80,14 +93,20 @@ func (t *ReadFileTool) Definition() schema.ToolDefinition {
 }
 
 // readFileArgs 定义 read_file 工具的 JSON 参数结构。
-// Offset 和 Limit 为可选参数；零值时使用默认行为（从头读取，maxReadLen 上限）。
+// StartLine/EndLine 与 Offset/Limit 互斥：设置了 StartLine 时优先按行号读取。
 type readFileArgs struct {
-	Path   string `json:"path"`
-	Offset int64  `json:"offset,omitempty"`
-	Limit  int    `json:"limit,omitempty"`
+	Path      string `json:"path"`
+	StartLine int    `json:"start_line,omitempty"` // 1-based，含；设置后走行号模式
+	EndLine   int    `json:"end_line,omitempty"`   // 1-based，含；0 表示读到末尾（上限 200 行）
+	Offset    int64  `json:"offset,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
 }
 
-// Execute 执行文件读取操作，支持 offset/limit 分页。
+// maxLineRead 行号模式下单次最多读取的行数（防止大文件占满上下文）。
+const maxLineRead = 200
+
+// Execute 执行文件读取操作，支持行号模式（start_line/end_line）和字节偏移模式（offset/limit）。
+// 设置了 start_line 时优先走行号模式。
 func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var input readFileArgs
 	if err := json.Unmarshal(args, &input); err != nil {
@@ -102,6 +121,12 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	unlock := RLockPath(fullPath)
 	defer unlock()
 
+	// 行号模式：start_line > 0 时按行读取，忽略 offset/limit。
+	if input.StartLine > 0 {
+		return readFileByLines(fullPath, input.StartLine, input.EndLine)
+	}
+
+	// 字节偏移模式（原有逻辑）。
 	file, err := os.Open(fullPath)
 	if err != nil {
 		return "", fmt.Errorf("打开文件失败: %w", err)
@@ -140,10 +165,64 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return string(content[:limit]) + fmt.Sprintf(
 			"\n\n...[内容已截断。offset 和 limit 单位均为字节（非行号）。"+
 				"已读取 offset=%d 起的 %d 字节，文件总大小 %d 字节。"+
-				"如需继续读取，请使用 offset=%d（不要把行号当作 offset）]...",
+				"如需继续读取，请使用 offset=%d（不要把行号当作 offset）。"+
+				"提示：按行读取更直观，可改用 start_line/end_line 参数。]...",
 			offset, limit, totalSize, nextOffset,
 		), nil
 	}
 
 	return string(content), nil
+}
+
+// readFileByLines 按行号读取文件内容（1-based，含两端）。
+// endLine 为 0 表示读到文件末尾，但最多读 maxLineRead 行。
+func readFileByLines(fullPath string, startLine, endLine int) (string, error) {
+	if startLine < 1 {
+		startLine = 1
+	}
+	// endLine 0 表示"读到末尾"，但上限 maxLineRead 行
+	if endLine <= 0 || endLine-startLine+1 > maxLineRead {
+		endLine = startLine + maxLineRead - 1
+	}
+
+	f, err := os.Open(fullPath)
+	if err != nil {
+		return "", fmt.Errorf("打开文件失败: %w", err)
+	}
+	defer f.Close()
+
+	var sb strings.Builder
+	scanner := bufio.NewScanner(f)
+	// 扩大 scanner buffer 以支持较长行
+	scanner.Buffer(make([]byte, 512*1024), 512*1024)
+
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		if lineNum < startLine {
+			continue
+		}
+		if lineNum > endLine {
+			break
+		}
+		sb.WriteString(scanner.Text())
+		sb.WriteByte('\n')
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("读取文件失败: %w", err)
+	}
+
+	if sb.Len() == 0 {
+		if lineNum < startLine {
+			return fmt.Sprintf("[start_line=%d 超出文件总行数（%d 行）]", startLine, lineNum), nil
+		}
+		return fmt.Sprintf("[第 %d-%d 行内容为空]", startLine, endLine), nil
+	}
+
+	// 若实际文件行数超过 endLine 的范围，注明截断
+	suffix := ""
+	if lineNum >= endLine && scanner.Scan() {
+		suffix = fmt.Sprintf("\n...[已读取第 %d-%d 行，如需继续请使用 start_line=%d]...", startLine, endLine, endLine+1)
+	}
+	return sb.String() + suffix, nil
 }

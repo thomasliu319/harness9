@@ -129,7 +129,7 @@ func runInstance(ctx context.Context, inst Instance, cfg Config) RunResult {
 		return RunResult{Instance: inst, Error: fmt.Errorf("创建 LLM provider 失败: %w", err), Duration: time.Since(start)}
 	}
 	engOpts := []engine.Option{
-		engine.WithPromptBuilder(&swebenchPromptBuilder{instance: inst}),
+		engine.WithPromptBuilder(&swebenchPromptBuilder{instance: inst, workDir: tmpDir}),
 	}
 	if cfg.MaxTurns > 0 {
 		engOpts = append(engOpts, engine.WithMaxTurns(cfg.MaxTurns))
