@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -20,9 +21,20 @@ import (
 )
 
 const (
-	searchTimeout = 20 * time.Second
-	ddgSearchURL  = "https://html.duckduckgo.com/html/"
+	searchTimeout     = 20 * time.Second
+	searchDialTimeout = 10 * time.Second
+	ddgSearchURL      = "https://html.duckduckgo.com/html/"
 )
+
+// searchClient 是专用于 web_search 的 HTTP 客户端，配置了 dial 超时以避免
+// 底层 TCP 握手阶段因 context cancel 响应不及时而长时间阻塞。
+var searchClient = &http.Client{
+	Transport: &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout: searchDialTimeout,
+		}).DialContext,
+	},
+}
 
 // WebSearchTool 实现 BaseTool 接口，通过 DuckDuckGo 搜索互联网内容。
 type WebSearchTool struct {
@@ -122,12 +134,12 @@ func (t *WebSearchTool) duckDuckGoSearch(ctx context.Context, query string, maxR
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, t.backendURL,
 		strings.NewReader(formData.Encode()))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create request failed: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", webUserAgent)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := searchClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}
