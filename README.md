@@ -340,6 +340,30 @@ echo "SANDBOX_ENABLED=false" >> .env
 
 详见 [Sandbox 沙箱系统](docs/核心功能/sandbox.md)。
 
+### 网页搜索与抓取（`web_search` + `web_fetch`）
+
+Agent 可直接搜索互联网并抓取页面内容，无需任何 API Key 或外部账号：
+
+```
+› 搜索 Go 1.25 的新特性并总结
+
+  ✓ web_search("Go 1.25 release notes") — 0.8s
+  [1] Go 1.25 Release Notes | URL: https://go.dev/doc/go1.25
+  [2] ...
+
+  ✓ web_fetch("https://go.dev/doc/go1.25") — 1.2s
+  # Go 1.25 Release Notes
+  > 来源：https://go.dev/doc/go1.25
+  ...
+```
+
+- **`web_search`**：POST 到 DuckDuckGo HTML 端点（`html.duckduckgo.com/html/`），解析返回标题、URL、摘要列表
+- **`web_fetch`**：HTTP GET + `go-readability` 提取主内容 + `html-to-markdown` 转换，输出对 LLM 友好的 Markdown
+- **内置 SSRF 防护**：每次请求前校验 URL——禁止 `ftp://`、userinfo、127.x.x.x、169.254.x.x（云 metadata）、RFC1918 私网等；DNS 解析后二次检查 IP，防御 DNS rebinding；重定向链每跳复检
+- **当前日期注入**：System Prompt 实时注入 `当前日期：YYYY-MM-DD`，Agent 搜索时自然带入正确年份
+
+详见 [网页搜索与抓取技术方案](docs/核心功能/web_search.md)。
+
 ### 标准 ReAct 循环
 
 每个 Turn 执行一次 LLM 调用（携带完整工具列表），工具结果作为 Observation 注入上下文，驱动下一轮推理：
@@ -398,7 +422,7 @@ for evt := range stream {
 | **Skills**     | Skills 解析、索引、按需加载（`use_skill` 工具）                                                       | ✅   |
 | **Provider**   | LLM 统一接口，OpenAI / Anthropic 适配器，实际 token 用量提取                                           | ✅   |
 | **Schema**     | 跨组件共享的核心数据类型（Message、ToolCall、Usage 等）                                                  | ✅   |
-| **Tools**      | 工具注册表 + 内置工具（bash / read_file（offset/limit 分页）/ write_file / edit_file / todo_write / memory_write / memory_search）                 | ✅   |
+| **Tools**      | 工具注册表 + 内置工具（bash / read_file（offset/limit 分页）/ write_file / edit_file / todo_write / memory_write / memory_search / **web_search / web_fetch**）| ✅   |
 | **Sandbox**    | Docker 容器级隔离：OS 级进程沙箱（cap-drop/no-new-privileges）、Agent 级独立容器、bind mount 工具透明路由、TUI SandboxBar、孤儿容器回收；默认开启；`SANDBOX_ENABLED=false` 关闭 | ✅   |
 | **Observability** | OpenTelemetry 链路追踪：`OTELEngineObserver`（Interaction/Turn Span）+ `TracingProvider`（LLM Span + Token Metrics）+ `ObservabilityHook`（Tool Span）；默认 noop 零开销；支持接入 Langfuse / Grafana / Jaeger | ✅   |
 | **Evals**      | 自动化评估框架：`ScriptedProvider`（确定性 mock）+ `Assertion`（Hard/Soft 断言）+ `EvalHarness`（RunCase/Suite）+ `SetupHermeticEnv` + `BuildReport`（JSON/Markdown）；16 个黄金数据集用例；CI Quality Gate | ✅   |
@@ -461,6 +485,7 @@ harness9/
 | [Human-in-the-Loop 权限控制](docs/核心功能/human-in-the-loop.md)           | HookDecision、DangerHook、PermissionHook、审批对话框、白名单配置、敏感路径保护  |
 | [Sandbox 沙箱系统](docs/核心功能/sandbox.md)                               | Docker 容器级隔离、Environment 接口、五状态生命周期、安全加固参数、TUI SandboxBar、孤儿回收 |
 | [测试·评估·可观测体系](docs/核心功能/eval.md)                 | Test/Eval/Observability 完整体系：ScriptedProvider、黄金数据集（16 用例）、CI Quality Gate、OTEL 链路追踪、Langfuse 接入指南 |
+| [网页搜索与抓取技术方案](docs/核心功能/web_search.md)           | web_search/web_fetch 工具、SSRF 防护（isSafeURL）、HTML→Markdown 管线、DuckDuckGo 后端、当前日期注入 |
 | [AGENTS.md](AGENTS.md)                                       | 项目开发规范、编码标准、架构决策                                        |
 
 
