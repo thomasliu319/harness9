@@ -304,4 +304,4 @@ Agent:
 | HermesAgent | 全功能 | 8 个后端，LLM 内容压缩管线（Gemini Flash，支持 2M 字符分块） |
 | Claude Agent SDK | 官方内置 | `WebSearch`/`WebFetch` 原生工具，research-agent 示例展示 Sub-Agent 并行研究模式 |
 
-详细调研见 [docs/技术调研/web-search-capability.md](../技术调研/web-search-capability.md)。
+详细调研见 `docs/技术调研/web-search-capability.md`（本地调研文档，不随仓库发布）。
