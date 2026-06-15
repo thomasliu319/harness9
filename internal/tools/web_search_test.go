@@ -112,6 +112,73 @@ func TestWebSearchToolEmptyQuery(t *testing.T) {
 	}
 }
 
+// mockTavilyResponse 模拟 Tavily Search API 的 JSON 响应。
+const mockTavilyResponse = `{
+	"results": [
+		{
+			"title": "First Tavily Result",
+			"url": "https://example.com/tavily1",
+			"content": "Tavily snippet for result one.",
+			"score": 0.95
+		},
+		{
+			"title": "Second Tavily Result",
+			"url": "https://example.com/tavily2",
+			"content": "Tavily snippet for result two.",
+			"score": 0.87
+		}
+	]
+}`
+
+func TestTavilySearch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
+			t.Errorf("expected Content-Type application/json, got %s", ct)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(mockTavilyResponse))
+	}))
+	defer server.Close()
+
+	tool := &WebSearchTool{backendURL: server.URL, tavilyAPIKey: "test-key"}
+	args, _ := json.Marshal(map[string]interface{}{"query": "golang tutorial", "max_results": 5})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if !strings.Contains(result, "[1]") {
+		t.Errorf("result should contain numbered results\ngot:\n%s", result)
+	}
+	if !strings.Contains(result, "First Tavily Result") {
+		t.Errorf("result should contain first title\ngot:\n%s", result)
+	}
+	if !strings.Contains(result, "https://example.com/tavily1") {
+		t.Errorf("result should contain first URL\ngot:\n%s", result)
+	}
+}
+
+func TestTavilySearchUnauthorized(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid api key"}`))
+	}))
+	defer server.Close()
+
+	tool := &WebSearchTool{backendURL: server.URL, tavilyAPIKey: "bad-key"}
+	args, _ := json.Marshal(map[string]interface{}{"query": "test"})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "Error") {
+		t.Errorf("expected error for 401, got: %s", result)
+	}
+}
+
 func TestWebSearchToolEmptyResults(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")

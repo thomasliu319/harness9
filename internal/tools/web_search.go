@@ -1,10 +1,10 @@
 // 内置工具：WebSearch（网页搜索工具）。
 //
-// 使用 DuckDuckGo HTML 端点（html.duckduckgo.com/html/）执行搜索，
-// 无需 API Key，零外部平台依赖。
+// 支持 DuckDuckGo（默认，无需 API Key）和 Tavily Search API（需配置 TAVILY_API_KEY）。
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ const (
 	searchTimeout     = 20 * time.Second
 	searchDialTimeout = 10 * time.Second
 	ddgSearchURL      = "https://html.duckduckgo.com/html/"
+	tavilySearchURL   = "https://api.tavily.com/search"
 )
 
 // searchClient 是专用于 web_search 的 HTTP 客户端，配置了 dial 超时以避免
@@ -36,26 +38,36 @@ var searchClient = &http.Client{
 	},
 }
 
-// WebSearchTool 实现 BaseTool 接口，通过 DuckDuckGo 搜索互联网内容。
+// WebSearchTool 实现 BaseTool 接口，通过 DuckDuckGo（默认）或 Tavily（配置 API Key 时）搜索互联网内容。
 type WebSearchTool struct {
-	// backendURL 默认为 ddgSearchURL，测试中可替换为 httptest 服务器地址。
+	// backendURL 默认为 ddgSearchURL 或 tavilySearchURL，测试中可替换为 httptest 服务器地址。
 	backendURL string
+	// tavilyAPIKey 为空时使用 DuckDuckGo，非空时使用 Tavily Search API。
+	tavilyAPIKey string
 }
 
-// NewWebSearchTool 创建默认使用 DuckDuckGo 的搜索工具实例。
+// NewWebSearchTool 创建搜索工具实例。
+// 若环境变量 TAVILY_API_KEY 已设置，优先使用 Tavily Search API，否则使用 DuckDuckGo。
 func NewWebSearchTool() *WebSearchTool {
-	return &WebSearchTool{backendURL: ddgSearchURL}
+	apiKey := os.Getenv("TAVILY_API_KEY")
+	t := &WebSearchTool{backendURL: ddgSearchURL}
+	if apiKey != "" {
+		t.backendURL = tavilySearchURL
+		t.tavilyAPIKey = apiKey
+	}
+	return t
 }
 
 func (t *WebSearchTool) Name() string { return "web_search" }
 
 // Definition 返回 web_search 工具的 schema 定义。
 func (t *WebSearchTool) Definition() schema.ToolDefinition {
+	desc := "在互联网上搜索信息，返回标题、URL 和摘要列表。" +
+		"搜索后可使用 web_fetch 抓取具体页面内容。"
+
 	return schema.ToolDefinition{
-		Name: t.Name(),
-		Description: "在互联网上搜索信息，返回标题、URL 和摘要列表。" +
-			"使用 DuckDuckGo，无需 API Key。" +
-			"搜索后可使用 web_fetch 抓取具体页面内容。",
+		Name:        t.Name(),
+		Description: desc,
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -102,7 +114,13 @@ func (t *WebSearchTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		maxResults = 10
 	}
 
-	results, err := t.duckDuckGoSearch(ctx, input.Query, maxResults)
+	var results []searchResult
+	var err error
+	if t.tavilyAPIKey != "" {
+		results, err = t.tavilySearch(ctx, input.Query, maxResults)
+	} else {
+		results, err = t.duckDuckGoSearch(ctx, input.Query, maxResults)
+	}
 	if err != nil {
 		return fmt.Sprintf("Error: search failed — %v", err), nil
 	}
@@ -156,6 +174,84 @@ func (t *WebSearchTool) duckDuckGoSearch(ctx context.Context, query string, maxR
 
 	return parseDDGResults(string(body), maxResults), nil
 }
+
+// ---- Tavily Search API ----
+
+type tavilyRequest struct {
+	APIKey      string `json:"api_key"`
+	Query       string `json:"query"`
+	SearchDepth string `json:"search_depth"`
+	MaxResults  int    `json:"max_results"`
+}
+
+type tavilyResponse struct {
+	Results []tavilyResult `json:"results"`
+}
+
+type tavilyResult struct {
+	Title   string  `json:"title"`
+	URL     string  `json:"url"`
+	Content string  `json:"content"`
+	Score   float64 `json:"score"`
+}
+
+// tavilySearch 调用 Tavily Search API 执行搜索。
+func (t *WebSearchTool) tavilySearch(ctx context.Context, query string, maxResults int) ([]searchResult, error) {
+	body := tavilyRequest{
+		APIKey:      t.tavilyAPIKey,
+		Query:       query,
+		SearchDepth: "basic",
+		MaxResults:  maxResults,
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, searchTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, t.backendURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", webUserAgent)
+
+	resp, err := searchClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyPreview, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return nil, fmt.Errorf("unexpected status %d from Tavily API: %s", resp.StatusCode, strings.TrimSpace(string(bodyPreview)))
+	}
+
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	var tavilyResp tavilyResponse
+	if err := json.Unmarshal(respBytes, &tavilyResp); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+
+	results := make([]searchResult, 0, len(tavilyResp.Results))
+	for _, r := range tavilyResp.Results {
+		results = append(results, searchResult{
+			Title:   r.Title,
+			URL:     r.URL,
+			Snippet: r.Content,
+		})
+	}
+	return results, nil
+}
+
+// ---- DuckDuckGo HTML 解析 ----
 
 // parseDDGResults 解析 DuckDuckGo HTML 响应，提取搜索结果列表。
 func parseDDGResults(htmlBody string, maxResults int) []searchResult {

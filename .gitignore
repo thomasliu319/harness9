@@ -37,5 +37,8 @@ website/package-lock.json
 
 logs/
 
+# IDE 配置文件（.idea/），因机器和 IDE 安装而异，不纳入版本控制
+.idea/
+
 # SWE-bench 数据集文件（体积大，不纳入版本控制）
 swe-bench-lite.jsonl
